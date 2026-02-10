@@ -2,11 +2,12 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Search, Loader2 } from "lucide-react";
 
-interface SearchResult {
-  symbol: string;
+export interface SearchResult {
+  recid: number | null;
+  symbol: string | null;
   title: string | null;
-  body: string | null;
-  year: number | null;
+  date: string | null;
+  datestamp: string;
 }
 
 interface Props {
@@ -51,7 +52,7 @@ export function DocumentSearch({
 
   const handleSelect = (doc: SearchResult) => {
     onSelect?.(doc);
-    setQuery(doc.symbol);
+    setQuery(doc.symbol || doc.title || String(doc.recid || ""));
     setOpen(false);
     setHighlighted(-1);
   };
@@ -112,21 +113,22 @@ export function DocumentSearch({
         <div className="absolute z-50 mt-1 max-h-80 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
           {results.map((doc, i) => (
             <button
-              key={doc.symbol}
+              key={doc.recid ?? `${doc.symbol}-${i}`}
               onClick={() => handleSelect(doc)}
               onMouseEnter={() => setHighlighted(i)}
               className={`w-full px-3 py-2 text-left ${highlighted === i ? "bg-gray-100" : ""}`}
             >
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium text-un-blue">
-                  {doc.symbol}
+                  {doc.symbol || `RECID ${doc.recid ?? "?"}`}
                 </span>
-                <span className="text-xs text-gray-400">{doc.year}</span>
+                <span className="text-xs text-gray-400">
+                  {doc.date || new Date(doc.datestamp).toISOString().slice(0, 10)}
+                </span>
               </div>
               {doc.title && (
                 <p className="truncate text-xs text-gray-600">{doc.title}</p>
               )}
-              {doc.body && <p className="text-xs text-gray-400">{doc.body}</p>}
             </button>
           ))}
         </div>

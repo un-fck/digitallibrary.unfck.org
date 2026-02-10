@@ -45,6 +45,7 @@ async function verifySessionToken(token: string): Promise<boolean> {
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  if (pathname === "/") return NextResponse.next();
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p)))
     return NextResponse.next();
   if (
@@ -55,7 +56,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   const session = request.cookies.get("auth_session")?.value;
   if (!session || !(await verifySessionToken(session)))
-    return NextResponse.redirect(new URL("/about", request.url));
+    return NextResponse.redirect(new URL("/login", request.url));
   return NextResponse.next();
 }
 

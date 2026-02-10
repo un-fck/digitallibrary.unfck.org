@@ -30,7 +30,7 @@ export function Header({
         className={`mx-auto flex ${widthClass} items-center justify-between px-3 py-4 sm:px-4`}
       >
         <Link
-          href={isLoggedIn ? "/" : "/about"}
+          href="/"
           className="flex items-center gap-3 hover:opacity-90"
         >
           <Image

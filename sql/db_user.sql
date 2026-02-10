@@ -19,6 +19,7 @@ REVOKE ALL ON ALL TABLES IN SCHEMA public FROM digitallibrary_rw;
 
 -- Grant access to the digitallibrary schema only
 GRANT USAGE ON SCHEMA digitallibrary TO digitallibrary_rw;
+GRANT CREATE ON SCHEMA digitallibrary TO digitallibrary_rw;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA digitallibrary TO digitallibrary_rw;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA digitallibrary TO digitallibrary_rw;
 
@@ -27,6 +28,8 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA digitallibrary
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO digitallibrary_rw;
 ALTER DEFAULT PRIVILEGES IN SCHEMA digitallibrary
   GRANT USAGE, SELECT ON SEQUENCES TO digitallibrary_rw;
+ALTER DEFAULT PRIVILEGES IN SCHEMA digitallibrary
+  GRANT EXECUTE ON FUNCTIONS TO digitallibrary_rw;
 
 -- Grant read-only access to the systemchart schema
 GRANT USAGE ON SCHEMA systemchart TO digitallibrary_rw;

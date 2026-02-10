@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db/db";
 
 interface DocumentRow {
-  symbol: string;
-  proper_title: string | null;
-  issuing_body: string | null;
-  date_year: number | null;
+  recid: number | null;
+  display_identifier: string | null;
+  title_primary: string | null;
+  publication_date_primary: string | null;
+  datestamp: string;
 }
 
 export async function GET(req: NextRequest) {
@@ -13,19 +14,55 @@ export async function GET(req: NextRequest) {
   if (!q || q.length < 2) return NextResponse.json([]);
 
   const rows = await query<DocumentRow>(
-    `SELECT symbol, proper_title, issuing_body, date_year FROM public.documents
-     WHERE symbol ILIKE $1 || '%' OR proper_title ILIKE '%' || $1 || '%'
-     ORDER BY CASE WHEN symbol ILIKE $1 || '%' THEN 0 ELSE 1 END, date_year DESC NULLS LAST
+    `SELECT
+       recid,
+       COALESCE(
+         NULLIF(document_symbol, ''),
+         (
+           SELECT ident
+           FROM unnest(dc_identifier) AS ident
+           WHERE ident !~ '^https?://'
+           LIMIT 1
+         )
+       ) AS display_identifier,
+       title_primary,
+       publication_date_primary,
+       datestamp::text
+     FROM digitallibrary.documents
+     WHERE deleted = FALSE
+       AND (
+         document_symbol ILIKE $1 || '%'
+         OR title_primary ILIKE '%' || $1 || '%'
+         OR EXISTS (
+           SELECT 1
+           FROM unnest(dc_identifier) AS ident
+           WHERE ident ILIKE $1 || '%'
+              OR ident ILIKE '%' || $1 || '%'
+         )
+       )
+     ORDER BY
+       CASE
+         WHEN document_symbol ILIKE $1 || '%' THEN 0
+         WHEN EXISTS (
+           SELECT 1
+           FROM unnest(dc_identifier) AS ident
+           WHERE ident !~ '^https?://'
+             AND ident ILIKE $1 || '%'
+         ) THEN 1
+         ELSE 2
+       END,
+       datestamp DESC
      LIMIT 20`,
     [q],
   );
 
   return NextResponse.json(
     rows.map((r) => ({
-      symbol: r.symbol,
-      title: r.proper_title?.replace(/\s*:\s*$/, "").trim() || null,
-      body: r.issuing_body,
-      year: r.date_year,
+      recid: r.recid,
+      symbol: r.display_identifier,
+      title: r.title_primary?.replace(/\s*:\s*$/, "").trim() || null,
+      date: r.publication_date_primary,
+      datestamp: r.datestamp,
     })),
   );
 }

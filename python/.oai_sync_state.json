@@ -1,0 +1,22 @@
+{
+  "prefixes": {
+    "marcxml": {
+      "from": "2025-01-01T00:00:00Z",
+      "pagesFetched": 1,
+      "recordsWritten": 60,
+      "resumptionToken": "___yid50k5o",
+      "set": null,
+      "until": null,
+      "updatedAt": "2026-02-10T01:16:04Z"
+    },
+    "oai_dc": {
+      "from": "2025-01-01T00:00:00Z",
+      "pagesFetched": 1,
+      "recordsWritten": 60,
+      "resumptionToken": "___i6tsstjz",
+      "set": null,
+      "until": null,
+      "updatedAt": "2026-02-10T01:15:53Z"
+    }
+  }
+}
