@@ -11,8 +11,8 @@ interface Props {
   hideAbout?: boolean;
 }
 
-export const SITE_TITLE = "UN Web App";
-export const SITE_SUBTITLE = "A modern web application for the United Nations";
+export const SITE_TITLE = "UN Digital Library 2.0";
+export const SITE_SUBTITLE = "Explore resolutions, reports, and more";
 
 export function Header({
   user,

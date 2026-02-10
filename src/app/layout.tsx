@@ -11,11 +11,11 @@ const roboto = Roboto({
 });
 
 export const metadata: Metadata = {
-  title: "United Nations",
-  description: "A modern web application for the United Nations.",
+  title: "UN Digital Library 2.0",
+  description: "Explore resolutions, reports, and more.",
   openGraph: {
-    title: "United Nations",
-    description: "A modern web application for the United Nations.",
+    title: "UN Digital Library 2.0",
+    description: "Explore resolutions, reports, and more.",
     type: "website",
     locale: "en_US",
   },
