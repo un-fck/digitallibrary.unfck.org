@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:digitallibrary.un.org)",
+      "Bash(curl:*)",
+      "Bash(gunzip:*)",
+      "Bash(python3:*)"
+    ]
+  }
+}

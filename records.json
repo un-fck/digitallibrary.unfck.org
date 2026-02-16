@@ -1,0 +1,3667 @@
+[
+  {
+    "leader": "01880cam a2200469#  4500",
+    "fields": [
+      {
+        "001": "246948"
+      },
+      {
+        "005": "20230615051528.0"
+      },
+      {
+        "008": "971120s1997    usa     r           eng u"
+      },
+      {
+        "029": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "JN"
+            },
+            {
+              "b": "N9732451 E"
+            }
+          ]
+        }
+      },
+      {
+        "035": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "D428822X"
+            },
+            {
+              "z": "D0216835"
+            }
+          ]
+        }
+      },
+      {
+        "035": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "(DHL)428822"
+            }
+          ]
+        }
+      },
+      {
+        "039": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "DHU"
+            }
+          ]
+        }
+      },
+      {
+        "040": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "NNUN"
+            },
+            {
+              "b": "eng"
+            }
+          ]
+        }
+      },
+      {
+        "041": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "arachiengfrerusspa"
+            }
+          ]
+        }
+      },
+      {
+        "049": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "usa"
+            }
+          ]
+        }
+      },
+      {
+        "089": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Resolutions and decisions (UN) -- Draft"
+            },
+            {
+              "b": "B02"
+            }
+          ]
+        }
+      },
+      {
+        "091": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "LTD"
+            }
+          ]
+        }
+      },
+      {
+        "099": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "UNH"
+            },
+            {
+              "b": "DHU"
+            }
+          ]
+        }
+      },
+      {
+        "191": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/C.3/52/L.46"
+            },
+            {
+              "b": "A/"
+            },
+            {
+              "c": "52"
+            },
+            {
+              "d": "A/C.3/"
+            },
+            {
+              "e": "52/L.46"
+            },
+            {
+              "f": "003804"
+            },
+            {
+              "9": "G10"
+            },
+            {
+              "q": "AC352L46"
+            },
+            {
+              "r": "A52"
+            },
+            {
+              "0": "(DHLAUTH)465791"
+            }
+          ]
+        }
+      },
+      {
+        "245": {
+          "ind1": "1",
+          "ind2": "0",
+          "subfields": [
+            {
+              "a": "Human rights and unilateral coercive measures :"
+            },
+            {
+              "b": "draft resolution /"
+            },
+            {
+              "c": "Afghanistan, China, Cuba, Democratic People's Republic of Korea, Iran (Islamic Republic of), Iraq, Libyan Arab Jamahiriya, Myanmar, Sudan and Syrian Arab Republic."
+            }
+          ]
+        }
+      },
+      {
+        "249": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Draft resolution on human rights and unilateral coersive measures / Afghanistan, China, Cuba, Democratic People's Republic of Korea, Iran (Islamic Republic of), Iraq, Libyan Arab Jamahiriya, Myanmar, Sudan and Syrian Arab Republic"
+            }
+          ]
+        }
+      },
+      {
+        "260": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "[New York] :"
+            },
+            {
+              "b": "UN,"
+            },
+            {
+              "c": "18 Nov. 1997."
+            }
+          ]
+        }
+      },
+      {
+        "269": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "1997-11-18"
+            }
+          ]
+        }
+      },
+      {
+        "300": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "3 p."
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "0",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "RIGHT TO DEVELOPMENT"
+            },
+            {
+              "0": "(DHLAUTH)269877"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "0",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "TRADE BOYCOTTS"
+            },
+            {
+              "0": "(DHLAUTH)272858"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "0",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "SANCTIONS"
+            },
+            {
+              "0": "(DHLAUTH)9840"
+            }
+          ]
+        }
+      },
+      {
+        "710": {
+          "ind1": "2",
+          "ind2": "0",
+          "subfields": [
+            {
+              "a": "Afghanistan"
+            },
+            {
+              "9": "ms"
+            },
+            {
+              "0": "(DHLAUTH)71929"
+            }
+          ]
+        }
+      },
+      {
+        "710": {
+          "ind1": "2",
+          "ind2": "0",
+          "subfields": [
+            {
+              "a": "Iraq"
+            },
+            {
+              "9": "ms"
+            },
+            {
+              "0": "(DHLAUTH)72473"
+            }
+          ]
+        }
+      },
+      {
+        "710": {
+          "ind1": "2",
+          "ind2": "0",
+          "subfields": [
+            {
+              "a": "China"
+            },
+            {
+              "9": "ms"
+            },
+            {
+              "0": "(DHLAUTH)72079"
+            }
+          ]
+        }
+      },
+      {
+        "710": {
+          "ind1": "2",
+          "ind2": "0",
+          "subfields": [
+            {
+              "a": "Cuba"
+            },
+            {
+              "9": "ms"
+            },
+            {
+              "0": "(DHLAUTH)72139"
+            }
+          ]
+        }
+      },
+      {
+        "710": {
+          "ind1": "2",
+          "ind2": "0",
+          "subfields": [
+            {
+              "a": "Democratic People's Republic of Korea"
+            },
+            {
+              "9": "ms"
+            },
+            {
+              "0": "(DHLAUTH)72153"
+            }
+          ]
+        }
+      },
+      {
+        "710": {
+          "ind1": "2",
+          "ind2": "0",
+          "subfields": [
+            {
+              "a": "Iran (Islamic Republic of)"
+            },
+            {
+              "9": "ms"
+            },
+            {
+              "0": "(DHLAUTH)39843"
+            }
+          ]
+        }
+      },
+      {
+        "710": {
+          "ind1": "2",
+          "ind2": "0",
+          "subfields": [
+            {
+              "a": "Libyan Arab Jamahiriya"
+            },
+            {
+              "0": "(DHLAUTH)39889"
+            }
+          ]
+        }
+      },
+      {
+        "710": {
+          "ind1": "2",
+          "ind2": "0",
+          "subfields": [
+            {
+              "a": "Myanmar"
+            },
+            {
+              "9": "ms"
+            },
+            {
+              "0": "(DHLAUTH)59152"
+            }
+          ]
+        }
+      },
+      {
+        "710": {
+          "ind1": "2",
+          "ind2": "0",
+          "subfields": [
+            {
+              "a": "Sudan"
+            },
+            {
+              "9": "ms"
+            },
+            {
+              "0": "(DHLAUTH)40061"
+            }
+          ]
+        }
+      },
+      {
+        "710": {
+          "ind1": "2",
+          "ind2": "0",
+          "subfields": [
+            {
+              "a": "Syrian Arab Republic"
+            },
+            {
+              "9": "ms"
+            },
+            {
+              "0": "(DHLAUTH)72879"
+            }
+          ]
+        }
+      },
+      {
+        "793": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "03"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "العربية"
+            },
+            {
+              "9": "c3075545-a406-430f-8ffe-7a11c9d75762"
+            },
+            {
+              "s": "60682"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/246948/files/A_C.3_52_L.46-AR.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "中文"
+            },
+            {
+              "9": "0b140167-fa42-4ae6-9953-acae0e44356d"
+            },
+            {
+              "s": "150725"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/246948/files/A_C.3_52_L.46-ZH.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "English"
+            },
+            {
+              "9": "2e5e1322-30fe-4368-80e1-a3fa416a58ce"
+            },
+            {
+              "s": "15019"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/246948/files/A_C.3_52_L.46-EN.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "Français"
+            },
+            {
+              "9": "69face41-7415-4ded-bc42-0f464debe215"
+            },
+            {
+              "s": "15487"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/246948/files/A_C.3_52_L.46-FR.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "Русский"
+            },
+            {
+              "9": "6f36fcc5-bc73-44b4-9bb0-f09a010c5cbe"
+            },
+            {
+              "s": "48243"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/246948/files/A_C.3_52_L.46-RU.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "Español"
+            },
+            {
+              "9": "11373327-3dd2-479d-b1f7-4acb0414ba83"
+            },
+            {
+              "s": "19623"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/246948/files/A_C.3_52_L.46-ES.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "909": {
+          "ind1": "C",
+          "ind2": "O",
+          "subfields": [
+            {
+              "o": "oai:digitallibrary.un.org:246948"
+            },
+            {
+              "p": "sanctions"
+            }
+          ]
+        }
+      },
+      {
+        "930": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "UNDNO97"
+            }
+          ]
+        }
+      },
+      {
+        "930": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "CHCDEC97"
+            }
+          ]
+        }
+      },
+      {
+        "930": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "UPDQ499"
+            }
+          ]
+        }
+      },
+      {
+        "949": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "9": "A/C.3/52/L.46"
+            },
+            {
+              "b": "mq513661"
+            },
+            {
+              "i": "513661"
+            },
+            {
+              "k": "unes"
+            },
+            {
+              "l": "DHL"
+            },
+            {
+              "z": "i"
+            },
+            {
+              "m": "vcirc"
+            },
+            {
+              "d": "19980204000000"
+            }
+          ]
+        }
+      },
+      {
+        "955": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "04774800"
+            }
+          ]
+        }
+      },
+      {
+        "980": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "BIB"
+            }
+          ]
+        }
+      },
+      {
+        "981": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "General Assembly"
+            },
+            {
+              "b": "3rd Committee"
+            }
+          ]
+        }
+      },
+      {
+        "989": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Documents and Publications"
+            },
+            {
+              "b": "Draft Resolutions and Decisions"
+            }
+          ]
+        }
+      },
+      {
+        "991": {
+          "ind1": "1",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/52/251"
+            },
+            {
+              "b": "112"
+            },
+            {
+              "c": "Human rights questions."
+            },
+            {
+              "d": "HUMAN RIGHTS"
+            },
+            {
+              "0": "(DHLAUTH)476972"
+            }
+          ]
+        }
+      },
+      {
+        "991": {
+          "ind1": "1",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/52/251"
+            },
+            {
+              "b": "112b"
+            },
+            {
+              "c": "Human rights questions, including alternative approaches for improving the effective enjoyment of human rights and fundamental freedoms."
+            },
+            {
+              "d": "HUMAN RIGHTS ADVANCEMENT"
+            },
+            {
+              "0": "(DHLAUTH)476987"
+            }
+          ]
+        }
+      },
+      {
+        "991": {
+          "ind1": "1",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/52/251"
+            },
+            {
+              "b": "112b[20]"
+            },
+            {
+              "d": "COERCIVE MEASURES--INTERNATIONAL RELATIONS"
+            },
+            {
+              "z": "I0129070"
+            },
+            {
+              "0": "(DHLAUTH)477979"
+            }
+          ]
+        }
+      },
+      {
+        "998": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "19980204113600"
+            },
+            {
+              "b": "dhla"
+            },
+            {
+              "c": "20220527114000"
+            },
+            {
+              "d": "sh35cat"
+            },
+            {
+              "x": "0x00010000c6509d09"
+            },
+            {
+              "z": "20220527154325"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "leader": "01744cam a2200457#a 4500",
+    "fields": [
+      {
+        "001": "263762"
+      },
+      {
+        "005": "20240203192922.0"
+      },
+      {
+        "008": "981116c1998    usa     r     00010 eng d"
+      },
+      {
+        "029": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "JN"
+            },
+            {
+              "b": "N9834670 E"
+            }
+          ]
+        }
+      },
+      {
+        "035": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "D454579X"
+            },
+            {
+              "z": "D0229688"
+            }
+          ]
+        }
+      },
+      {
+        "035": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "(DHL)454579"
+            }
+          ]
+        }
+      },
+      {
+        "039": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "DHU"
+            }
+          ]
+        }
+      },
+      {
+        "040": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "NNUN"
+            },
+            {
+              "b": "eng"
+            }
+          ]
+        }
+      },
+      {
+        "041": {
+          "ind1": "0",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "arachiengfrerusspa"
+            }
+          ]
+        }
+      },
+      {
+        "049": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "USA"
+            }
+          ]
+        }
+      },
+      {
+        "089": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "b": "B02"
+            }
+          ]
+        }
+      },
+      {
+        "091": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "LTD"
+            }
+          ]
+        }
+      },
+      {
+        "099": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "UNH"
+            },
+            {
+              "b": "DHU"
+            }
+          ]
+        }
+      },
+      {
+        "191": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/C.3/53/L.33"
+            },
+            {
+              "b": "A/"
+            },
+            {
+              "c": "53"
+            },
+            {
+              "9": "G10"
+            },
+            {
+              "q": "AC353L33"
+            },
+            {
+              "r": "A53"
+            },
+            {
+              "0": "(DHLAUTH)474159"
+            }
+          ]
+        }
+      },
+      {
+        "245": {
+          "ind1": "1",
+          "ind2": "0",
+          "subfields": [
+            {
+              "a": "Human rights and unilateral coercive measures :"
+            },
+            {
+              "b": "draft resolution /"
+            },
+            {
+              "c": "South Africa"
+            }
+          ]
+        }
+      },
+      {
+        "249": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Draft resolution on human rights and unilateral coercive measures / China and South Africa (on behalf of the Movement of Non-Aligned Countries)"
+            }
+          ]
+        }
+      },
+      {
+        "260": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "[New York] :"
+            },
+            {
+              "b": "UN,"
+            },
+            {
+              "c": "11 Nov. 1998"
+            }
+          ]
+        }
+      },
+      {
+        "269": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "1998-11-11"
+            }
+          ]
+        }
+      },
+      {
+        "300": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "3 p."
+            }
+          ]
+        }
+      },
+      {
+        "500": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Submitted on behalf of the Movement of Non-Aligned Countries."
+            }
+          ]
+        }
+      },
+      {
+        "610": {
+          "ind1": "2",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "UN. Commission on Human Rights"
+            },
+            {
+              "2": "unbisn"
+            },
+            {
+              "0": "(DHLAUTH)49971"
+            }
+          ]
+        }
+      },
+      {
+        "610": {
+          "ind1": "2",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "UN High Commissioner for Human Rights"
+            },
+            {
+              "2": "unbisn"
+            },
+            {
+              "0": "(DHLAUTH)146414"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "0",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "SANCTIONS"
+            },
+            {
+              "2": "unbist"
+            },
+            {
+              "0": "(DHLAUTH)9840"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "0",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "INTERNATIONAL OBLIGATIONS"
+            },
+            {
+              "2": "unbist"
+            },
+            {
+              "0": "(DHLAUTH)269329"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "0",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "SELF-DETERMINATION OF PEOPLES"
+            },
+            {
+              "2": "unbist"
+            },
+            {
+              "0": "(DHLAUTH)268433"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "0",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "RIGHT TO DEVELOPMENT"
+            },
+            {
+              "2": "unbist"
+            },
+            {
+              "0": "(DHLAUTH)269877"
+            }
+          ]
+        }
+      },
+      {
+        "710": {
+          "ind1": "2",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "South Africa"
+            },
+            {
+              "9": "ms"
+            },
+            {
+              "0": "(DHLAUTH)72847"
+            }
+          ]
+        }
+      },
+      {
+        "793": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "03"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "العربية"
+            },
+            {
+              "9": "18f7089b-8022-4bf5-9da4-45518064556a"
+            },
+            {
+              "s": "66300"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/263762/files/A_C.3_53_L.33-AR.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "中文"
+            },
+            {
+              "9": "0cc25a37-a4f9-4231-8a76-9491eb23f456"
+            },
+            {
+              "s": "102575"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/263762/files/A_C.3_53_L.33-ZH.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "English"
+            },
+            {
+              "9": "2633ac3a-3abf-45d6-8618-6867556627dc"
+            },
+            {
+              "s": "39316"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/263762/files/A_C.3_53_L.33-EN.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "Français"
+            },
+            {
+              "9": "673792de-8c4b-412f-8024-c8d332d24828"
+            },
+            {
+              "s": "41403"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/263762/files/A_C.3_53_L.33-FR.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "Русский"
+            },
+            {
+              "9": "d5dd49dd-3f77-4a86-9ed6-d22fbf33650d"
+            },
+            {
+              "s": "44932"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/263762/files/A_C.3_53_L.33-RU.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "Español"
+            },
+            {
+              "9": "90d0ce5c-92c8-49d1-8954-52e219a1da28"
+            },
+            {
+              "s": "39869"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/263762/files/A_C.3_53_L.33-ES.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "909": {
+          "ind1": "C",
+          "ind2": "O",
+          "subfields": [
+            {
+              "o": "oai:digitallibrary.un.org:263762"
+            },
+            {
+              "p": "sanctions"
+            }
+          ]
+        }
+      },
+      {
+        "930": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "UNDNO98"
+            }
+          ]
+        }
+      },
+      {
+        "930": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "UDIQ498"
+            }
+          ]
+        }
+      },
+      {
+        "930": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "UPDQ499"
+            }
+          ]
+        }
+      },
+      {
+        "980": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "BIB"
+            }
+          ]
+        }
+      },
+      {
+        "981": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "General Assembly"
+            },
+            {
+              "b": "3rd Committee"
+            }
+          ]
+        }
+      },
+      {
+        "989": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Documents and Publications"
+            },
+            {
+              "b": "Draft Resolutions and Decisions"
+            }
+          ]
+        }
+      },
+      {
+        "991": {
+          "ind1": "1",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/53/251"
+            },
+            {
+              "b": "110"
+            },
+            {
+              "c": "Human rights questions."
+            },
+            {
+              "d": "HUMAN RIGHTS"
+            },
+            {
+              "0": "(DHLAUTH)484316"
+            }
+          ]
+        }
+      },
+      {
+        "991": {
+          "ind1": "1",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/53/251"
+            },
+            {
+              "b": "110b"
+            },
+            {
+              "c": "Human rights questions, including alternative approaches for improving the effective enjoyment of human rights and fundamental freedoms."
+            },
+            {
+              "d": "HUMAN RIGHTS ADVANCEMENT"
+            },
+            {
+              "0": "(DHLAUTH)485248"
+            }
+          ]
+        }
+      },
+      {
+        "991": {
+          "ind1": "1",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/53/251"
+            },
+            {
+              "b": "110b[30]"
+            },
+            {
+              "d": "SANCTIONS--INTERNATIONAL RELATIONS"
+            },
+            {
+              "z": "I0134099"
+            },
+            {
+              "0": "(DHLAUTH)519639"
+            }
+          ]
+        }
+      },
+      {
+        "993": {
+          "ind1": "1",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/RES/53/141"
+            }
+          ]
+        }
+      },
+      {
+        "993": {
+          "ind1": "3",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/53/625/Add.2"
+            }
+          ]
+        }
+      },
+      {
+        "998": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "19981116000000"
+            },
+            {
+              "b": "nmcs"
+            },
+            {
+              "c": "20100316094900"
+            },
+            {
+              "d": "amcat"
+            },
+            {
+              "x": "0x00010000a069e59e"
+            },
+            {
+              "z": "20200217173843"
+            }
+          ]
+        }
+      },
+      {
+        "999": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "pg"
+            },
+            {
+              "b": "19981117"
+            },
+            {
+              "c": "r"
+            }
+          ]
+        }
+      },
+      {
+        "999": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "km"
+            },
+            {
+              "b": "19981116"
+            },
+            {
+              "c": "c"
+            }
+          ]
+        }
+      },
+      {
+        "999": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "nm"
+            },
+            {
+              "b": "19981116"
+            },
+            {
+              "c": "q"
+            }
+          ]
+        }
+      },
+      {
+        "999": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "TA"
+            },
+            {
+              "b": "19981201"
+            },
+            {
+              "c": "r"
+            }
+          ]
+        }
+      },
+      {
+        "999": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "vwu20071213"
+            },
+            {
+              "b": "20071213"
+            },
+            {
+              "c": "u"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "leader": "01736cam a2200505#a 4500",
+    "fields": [
+      {
+        "001": "285782"
+      },
+      {
+        "005": "20230615051801.0"
+      },
+      {
+        "008": "990921c1999    usa     r     00010 eng d"
+      },
+      {
+        "029": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "JN"
+            },
+            {
+              "b": "N9923875 E"
+            }
+          ]
+        }
+      },
+      {
+        "035": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "D484282X"
+            },
+            {
+              "z": "D0242027"
+            }
+          ]
+        }
+      },
+      {
+        "035": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "(DHL)484282"
+            }
+          ]
+        }
+      },
+      {
+        "039": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "DHU"
+            }
+          ]
+        }
+      },
+      {
+        "040": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "NNUN"
+            },
+            {
+              "b": "eng"
+            }
+          ]
+        }
+      },
+      {
+        "041": {
+          "ind1": "0",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "arachiengfrerusspa"
+            }
+          ]
+        }
+      },
+      {
+        "049": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "USA"
+            }
+          ]
+        }
+      },
+      {
+        "089": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "b": "B15"
+            }
+          ]
+        }
+      },
+      {
+        "089": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "b": "B16"
+            }
+          ]
+        }
+      },
+      {
+        "091": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "GEN"
+            }
+          ]
+        }
+      },
+      {
+        "099": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "UNH"
+            },
+            {
+              "b": "DHU"
+            }
+          ]
+        }
+      },
+      {
+        "191": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/54/222"
+            },
+            {
+              "b": "A/"
+            },
+            {
+              "c": "54"
+            },
+            {
+              "9": "G00"
+            },
+            {
+              "f": "2.0456"
+            },
+            {
+              "q": "A54222"
+            },
+            {
+              "r": "A54"
+            },
+            {
+              "0": "(DHLAUTH)527213"
+            }
+          ]
+        }
+      },
+      {
+        "245": {
+          "ind1": "1",
+          "ind2": "0",
+          "subfields": [
+            {
+              "a": "Human rights and unilateral coercive measures :"
+            },
+            {
+              "b": "report of the Secretary-General"
+            }
+          ]
+        }
+      },
+      {
+        "249": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Report on human rights and unilateral coercive measures / Secretary-General"
+            }
+          ]
+        }
+      },
+      {
+        "260": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "[New York] :"
+            },
+            {
+              "b": "UN,"
+            },
+            {
+              "c": "12 Aug. 1999"
+            }
+          ]
+        }
+      },
+      {
+        "269": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "1999-08-12"
+            }
+          ]
+        }
+      },
+      {
+        "300": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "3 p."
+            }
+          ]
+        }
+      },
+      {
+        "500": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Transmits replies received from Ecuador, Jamaica, Kuwait and the Syrian Arab Republic."
+            }
+          ]
+        }
+      },
+      {
+        "630": {
+          "ind1": "0",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "Universal Declaration of Human Rights (1948)"
+            },
+            {
+              "0": "(DHLAUTH)34919"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "1",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "SANCTIONS"
+            },
+            {
+              "0": "(DHLAUTH)9840"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "1",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "TRADE RESTRICTIONS"
+            },
+            {
+              "0": "(DHLAUTH)272812"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "1",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "SELF-DETERMINATION OF PEOPLES"
+            },
+            {
+              "0": "(DHLAUTH)268433"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "1",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "HUMAN RIGHTS"
+            },
+            {
+              "0": "(DHLAUTH)274431"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "1",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "RIGHT TO DEVELOPMENT"
+            },
+            {
+              "2": "unbist"
+            },
+            {
+              "0": "(DHLAUTH)269877"
+            }
+          ]
+        }
+      },
+      {
+        "710": {
+          "ind1": "2",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "UN. Secretary-General"
+            },
+            {
+              "0": "(DHLAUTH)10663"
+            }
+          ]
+        }
+      },
+      {
+        "710": {
+          "ind1": "2",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Ecuador"
+            },
+            {
+              "9": "ms"
+            },
+            {
+              "0": "(DHLAUTH)72163"
+            }
+          ]
+        }
+      },
+      {
+        "710": {
+          "ind1": "2",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Jamaica"
+            },
+            {
+              "9": "ms"
+            },
+            {
+              "0": "(DHLAUTH)72493"
+            }
+          ]
+        }
+      },
+      {
+        "710": {
+          "ind1": "2",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Kuwait"
+            },
+            {
+              "9": "ms"
+            },
+            {
+              "0": "(DHLAUTH)39867"
+            }
+          ]
+        }
+      },
+      {
+        "710": {
+          "ind1": "2",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Syrian Arab Republic"
+            },
+            {
+              "9": "ms"
+            },
+            {
+              "0": "(DHLAUTH)72879"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "العربية"
+            },
+            {
+              "9": "0572ff88-ac8e-4a70-b4bf-1b77e89b7f6a"
+            },
+            {
+              "s": "66179"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/285782/files/A_54_222-AR.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "中文"
+            },
+            {
+              "9": "2f01f2d3-494b-4cb7-bab6-af2d2bbb6d0d"
+            },
+            {
+              "s": "157316"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/285782/files/A_54_222-ZH.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "English"
+            },
+            {
+              "9": "2f95791a-3982-4dab-9dee-a494e42a68d1"
+            },
+            {
+              "s": "44608"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/285782/files/A_54_222-EN.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "Français"
+            },
+            {
+              "9": "7ac4eb89-6d25-4be2-a9ce-5d486445880a"
+            },
+            {
+              "s": "48060"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/285782/files/A_54_222-FR.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "Русский"
+            },
+            {
+              "9": "ee11e998-d250-41ea-8ca5-3b86e98855de"
+            },
+            {
+              "s": "45771"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/285782/files/A_54_222-RU.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "Español"
+            },
+            {
+              "9": "b93b1c59-1b9c-4937-ad21-a469acc6f69c"
+            },
+            {
+              "s": "46477"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/285782/files/A_54_222-ES.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "909": {
+          "ind1": "C",
+          "ind2": "O",
+          "subfields": [
+            {
+              "o": "oai:digitallibrary.un.org:285782"
+            },
+            {
+              "p": "sanctions"
+            }
+          ]
+        }
+      },
+      {
+        "930": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "UNDSE99"
+            }
+          ]
+        }
+      },
+      {
+        "930": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "UDIQC99"
+            },
+            {
+              "b": "2.0456"
+            }
+          ]
+        }
+      },
+      {
+        "930": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "UPDQ499"
+            }
+          ]
+        }
+      },
+      {
+        "949": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "9": "A/54/222"
+            },
+            {
+              "b": "679547.3.1"
+            },
+            {
+              "i": "679547"
+            },
+            {
+              "k": "unfs"
+            },
+            {
+              "c": "c. 1"
+            },
+            {
+              "l": "DHL"
+            },
+            {
+              "z": "t"
+            },
+            {
+              "m": "14day"
+            },
+            {
+              "d": "19990921000000"
+            }
+          ]
+        }
+      },
+      {
+        "949": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "9": "A/54/222"
+            },
+            {
+              "b": "679550.6.1"
+            },
+            {
+              "i": "679550"
+            },
+            {
+              "k": "unas"
+            },
+            {
+              "c": "c. 1"
+            },
+            {
+              "l": "DHL"
+            },
+            {
+              "z": "t"
+            },
+            {
+              "m": "14day"
+            },
+            {
+              "d": "19990921000000"
+            }
+          ]
+        }
+      },
+      {
+        "949": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "9": "A/54/222"
+            },
+            {
+              "b": "679551.7.1"
+            },
+            {
+              "i": "679551"
+            },
+            {
+              "k": "uncs"
+            },
+            {
+              "c": "c. 1"
+            },
+            {
+              "l": "DHL"
+            },
+            {
+              "z": "t"
+            },
+            {
+              "m": "14day"
+            },
+            {
+              "d": "19990921000000"
+            }
+          ]
+        }
+      },
+      {
+        "949": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "9": "A/54/222"
+            },
+            {
+              "b": "679545.1.1"
+            },
+            {
+              "i": "679545"
+            },
+            {
+              "k": "unes"
+            },
+            {
+              "c": "c. 1"
+            },
+            {
+              "l": "DHL"
+            },
+            {
+              "z": "t"
+            },
+            {
+              "m": "14day"
+            },
+            {
+              "d": "19990921000000"
+            }
+          ]
+        }
+      },
+      {
+        "949": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "9": "A/54/222"
+            },
+            {
+              "b": "679548.4.1"
+            },
+            {
+              "i": "679548"
+            },
+            {
+              "k": "unss"
+            },
+            {
+              "c": "c. 1"
+            },
+            {
+              "l": "DHL"
+            },
+            {
+              "z": "t"
+            },
+            {
+              "m": "14day"
+            },
+            {
+              "d": "19990921000000"
+            }
+          ]
+        }
+      },
+      {
+        "949": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "9": "A/54/222"
+            },
+            {
+              "b": "679546.2.1"
+            },
+            {
+              "i": "679546"
+            },
+            {
+              "k": "unes"
+            },
+            {
+              "c": "c. 2"
+            },
+            {
+              "l": "DHL"
+            },
+            {
+              "z": "t"
+            },
+            {
+              "m": "14day"
+            },
+            {
+              "d": "19990921000000"
+            }
+          ]
+        }
+      },
+      {
+        "949": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "9": "A/54/222"
+            },
+            {
+              "b": "679549.5.1"
+            },
+            {
+              "i": "679549"
+            },
+            {
+              "k": "unrs"
+            },
+            {
+              "c": "c. 1"
+            },
+            {
+              "l": "DHL"
+            },
+            {
+              "z": "t"
+            },
+            {
+              "m": "14day"
+            },
+            {
+              "d": "19990921000000"
+            }
+          ]
+        }
+      },
+      {
+        "980": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "BIB"
+            }
+          ]
+        }
+      },
+      {
+        "981": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "General Assembly"
+            },
+            {
+              "b": "General Assembly Plenary"
+            }
+          ]
+        }
+      },
+      {
+        "989": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Documents and Publications"
+            },
+            {
+              "b": "Reports"
+            },
+            {
+              "c": "Secretary-General's Reports"
+            }
+          ]
+        }
+      },
+      {
+        "991": {
+          "ind1": "1",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/54/251"
+            },
+            {
+              "b": "116"
+            },
+            {
+              "c": "Human rights questions."
+            },
+            {
+              "d": "HUMAN RIGHTS"
+            },
+            {
+              "0": "(DHLAUTH)531366"
+            }
+          ]
+        }
+      },
+      {
+        "991": {
+          "ind1": "1",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/54/251"
+            },
+            {
+              "b": "116b"
+            },
+            {
+              "c": "Human rights questions, including alternative approaches for improving the effective enjoyment of human rights and fundamental freedoms."
+            },
+            {
+              "d": "HUMAN RIGHTS ADVANCEMENT"
+            },
+            {
+              "z": "I0138449"
+            },
+            {
+              "0": "(DHLAUTH)531368"
+            }
+          ]
+        }
+      },
+      {
+        "991": {
+          "ind1": "1",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/54/251"
+            },
+            {
+              "b": "116b[30]"
+            },
+            {
+              "d": "SANCTIONS--INTERNATIONAL RELATIONS"
+            },
+            {
+              "z": "I0138449"
+            },
+            {
+              "0": "(DHLAUTH)531861"
+            }
+          ]
+        }
+      },
+      {
+        "998": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "19990921000000"
+            },
+            {
+              "b": "nmcs"
+            },
+            {
+              "c": "20220527114000"
+            },
+            {
+              "d": "sh35cat"
+            },
+            {
+              "x": "0x00010000c6509dd3"
+            },
+            {
+              "z": "20220527154325"
+            }
+          ]
+        }
+      },
+      {
+        "999": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "pg"
+            },
+            {
+              "b": "20001101"
+            },
+            {
+              "c": "u"
+            }
+          ]
+        }
+      },
+      {
+        "999": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "pg"
+            },
+            {
+              "b": "19990922"
+            },
+            {
+              "c": "r"
+            }
+          ]
+        }
+      },
+      {
+        "999": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "SF"
+            },
+            {
+              "b": "19990922"
+            },
+            {
+              "c": "R"
+            }
+          ]
+        }
+      },
+      {
+        "999": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "ac"
+            },
+            {
+              "b": "19990921"
+            },
+            {
+              "c": "c"
+            }
+          ]
+        }
+      },
+      {
+        "999": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "nm"
+            },
+            {
+              "b": "19990921"
+            },
+            {
+              "c": "q"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "leader": "03297cam a2200685#a 4500",
+    "fields": [
+      {
+        "001": "404863"
+      },
+      {
+        "005": "20240801010034.0"
+      },
+      {
+        "008": "990917c1999    usa     r     00010 eng d"
+      },
+      {
+        "029": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "JN"
+            },
+            {
+              "b": "N0027893 E"
+            }
+          ]
+        }
+      },
+      {
+        "035": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "D604591X"
+            },
+            {
+              "z": "D0246001"
+            }
+          ]
+        }
+      },
+      {
+        "035": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "(DHL)604591"
+            }
+          ]
+        }
+      },
+      {
+        "039": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "DHU"
+            }
+          ]
+        }
+      },
+      {
+        "040": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "NNUN"
+            },
+            {
+              "b": "eng"
+            }
+          ]
+        }
+      },
+      {
+        "041": {
+          "ind1": "0",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "arachiengfrerusspa"
+            }
+          ]
+        }
+      },
+      {
+        "049": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "USA"
+            }
+          ]
+        }
+      },
+      {
+        "069": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "HUR"
+            },
+            {
+              "b": "0809"
+            }
+          ]
+        }
+      },
+      {
+        "089": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "b": "B01"
+            }
+          ]
+        }
+      },
+      {
+        "091": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "GEN"
+            }
+          ]
+        }
+      },
+      {
+        "099": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "UNH"
+            },
+            {
+              "b": "DHU"
+            }
+          ]
+        }
+      },
+      {
+        "191": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/RES/54/172"
+            },
+            {
+              "b": "A/"
+            },
+            {
+              "c": "54"
+            },
+            {
+              "9": "G99"
+            },
+            {
+              "f": "4.0372"
+            },
+            {
+              "q": "ARES54172"
+            },
+            {
+              "r": "A54"
+            },
+            {
+              "0": "(DHLAUTH)527213"
+            }
+          ]
+        }
+      },
+      {
+        "245": {
+          "ind1": "1",
+          "ind2": "0",
+          "subfields": [
+            {
+              "a": "Human rights and unilateral coercive measures :"
+            },
+            {
+              "b": "resolution /"
+            },
+            {
+              "c": "adopted by the General Assembly"
+            }
+          ]
+        }
+      },
+      {
+        "249": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Human rights and unilateral coercive measures"
+            }
+          ]
+        }
+      },
+      {
+        "260": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "[New York] :"
+            },
+            {
+              "b": "UN,"
+            },
+            {
+              "c": "15 Feb. 2000"
+            }
+          ]
+        }
+      },
+      {
+        "269": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "2000-02-15"
+            }
+          ]
+        }
+      },
+      {
+        "300": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "3 p."
+            }
+          ]
+        }
+      },
+      {
+        "500": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Adopted at the 83rd plenary meeting, 17 Dec. 1999."
+            }
+          ]
+        }
+      },
+      {
+        "592": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Issued in GAOR, 54th sess., Suppl. no. 49"
+            }
+          ]
+        }
+      },
+      {
+        "610": {
+          "ind1": "2",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "UN. Commission on Human Rights"
+            },
+            {
+              "2": "unbisn"
+            },
+            {
+              "0": "(DHLAUTH)49971"
+            }
+          ]
+        }
+      },
+      {
+        "610": {
+          "ind1": "2",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "UN High Commissioner for Human Rights"
+            },
+            {
+              "0": "(DHLAUTH)146414"
+            }
+          ]
+        }
+      },
+      {
+        "630": {
+          "ind1": "0",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "Universal Declaration of Human Rights (1948)"
+            },
+            {
+              "0": "(DHLAUTH)34919"
+            }
+          ]
+        }
+      },
+      {
+        "630": {
+          "ind1": "0",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "Declaration on the Right to Development (1986)"
+            },
+            {
+              "0": "(DHLAUTH)91970"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "1",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "SANCTIONS"
+            },
+            {
+              "2": "unbist"
+            },
+            {
+              "0": "(DHLAUTH)9840"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "1",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "TRADE RESTRICTIONS"
+            },
+            {
+              "0": "(DHLAUTH)272812"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "1",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "INTERNATIONAL OBLIGATIONS"
+            },
+            {
+              "2": "unbist"
+            },
+            {
+              "0": "(DHLAUTH)269329"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "1",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "RIGHT TO DEVELOPMENT"
+            },
+            {
+              "0": "(DHLAUTH)269877"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "1",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "SELF-DETERMINATION OF PEOPLES"
+            },
+            {
+              "0": "(DHLAUTH)268433"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "2",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "HUMAN RIGHTS"
+            },
+            {
+              "2": "unbist"
+            },
+            {
+              "0": "(DHLAUTH)274431"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "2",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "INTERNATIONAL INSTRUMENTS"
+            },
+            {
+              "2": "unbist"
+            },
+            {
+              "0": "(DHLAUTH)269454"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "2",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "POLITICAL STATUS"
+            },
+            {
+              "2": "unbist"
+            },
+            {
+              "0": "(DHLAUTH)269002"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "2",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "LAWS AND REGULATIONS"
+            },
+            {
+              "2": "unbist"
+            },
+            {
+              "0": "(DHLAUTH)268352"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "2",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "INFORMATION EXCHANGE"
+            },
+            {
+              "2": "unbist"
+            },
+            {
+              "0": "(DHLAUTH)275144"
+            }
+          ]
+        }
+      },
+      {
+        "650": {
+          "ind1": "2",
+          "ind2": "7",
+          "subfields": [
+            {
+              "a": "DEVELOPING COUNTRIES"
+            },
+            {
+              "0": "(DHLAUTH)268442"
+            }
+          ]
+        }
+      },
+      {
+        "710": {
+          "ind1": "2",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "UN. General Assembly (54th sess. : 1999-2000)"
+            },
+            {
+              "0": "(DHLAUTH)507357"
+            }
+          ]
+        }
+      },
+      {
+        "793": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "PL"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "العربية"
+            },
+            {
+              "9": "133447fb-9d82-4722-be4c-5c7530f54c99"
+            },
+            {
+              "s": "50510"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/404863/files/A_RES_54_172-AR.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "中文"
+            },
+            {
+              "9": "d436a4fa-1eca-42ac-8098-db813c3c8edf"
+            },
+            {
+              "s": "163787"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/404863/files/A_RES_54_172-ZH.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "English"
+            },
+            {
+              "9": "e98ff5d1-38fd-48a0-b263-b82baf11609d"
+            },
+            {
+              "s": "15169"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/404863/files/A_RES_54_172-EN.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "Français"
+            },
+            {
+              "9": "420ea66f-373c-42ee-befe-8786d8a35e47"
+            },
+            {
+              "s": "26793"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/404863/files/A_RES_54_172-FR.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "Русский"
+            },
+            {
+              "9": "e17bd756-7e34-47d1-afbc-330b8b0a3d3a"
+            },
+            {
+              "s": "58163"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/404863/files/A_RES_54_172-RU.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "Español"
+            },
+            {
+              "9": "e6d7eb5d-e8df-4203-b7c3-725319acf4b1"
+            },
+            {
+              "s": "706738"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/404863/files/A_RES_54_172-ES.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "856": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "y": "Other"
+            },
+            {
+              "9": "a41d1d58-5910-4cf6-8a46-5935b1e19f88"
+            },
+            {
+              "s": "19006"
+            },
+            {
+              "u": "https://digitallibrary.un.org/record/404863/files/A_RES_54_172-DE.pdf"
+            }
+          ]
+        }
+      },
+      {
+        "909": {
+          "ind1": "C",
+          "ind2": "O",
+          "subfields": [
+            {
+              "o": "oai:digitallibrary.un.org:404863"
+            },
+            {
+              "p": "sanctions"
+            }
+          ]
+        }
+      },
+      {
+        "930": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "HURXXX99"
+            }
+          ]
+        }
+      },
+      {
+        "930": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "UNDDE99"
+            }
+          ]
+        }
+      },
+      {
+        "930": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "UDIQD99"
+            },
+            {
+              "b": "4.0372"
+            }
+          ]
+        }
+      },
+      {
+        "930": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "UPDQ100"
+            }
+          ]
+        }
+      },
+      {
+        "980": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "BIB"
+            }
+          ]
+        }
+      },
+      {
+        "981": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "General Assembly"
+            },
+            {
+              "b": "General Assembly Plenary"
+            }
+          ]
+        }
+      },
+      {
+        "989": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Documents and Publications"
+            },
+            {
+              "b": "Resolutions and Decisions"
+            },
+            {
+              "c": "Resolutions"
+            }
+          ]
+        }
+      },
+      {
+        "991": {
+          "ind1": "1",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/54/251"
+            },
+            {
+              "b": "116b"
+            },
+            {
+              "c": "Human rights questions, including alternative approaches for improving the effective enjoyment of human rights and fundamental freedoms."
+            },
+            {
+              "d": "HUMAN RIGHTS ADVANCEMENT"
+            },
+            {
+              "0": "(DHLAUTH)531368"
+            }
+          ]
+        }
+      },
+      {
+        "991": {
+          "ind1": "1",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/54/251"
+            },
+            {
+              "b": "116b[30]"
+            },
+            {
+              "d": "SANCTIONS--INTERNATIONAL RELATIONS"
+            },
+            {
+              "z": "I0140489"
+            },
+            {
+              "0": "(DHLAUTH)531861"
+            }
+          ]
+        }
+      },
+      {
+        "992": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "1999-12-17"
+            }
+          ]
+        }
+      },
+      {
+        "993": {
+          "ind1": "2",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/C.3/54/L.79"
+            }
+          ]
+        }
+      },
+      {
+        "993": {
+          "ind1": "3",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/54/605/Add.2"
+            }
+          ]
+        }
+      },
+      {
+        "993": {
+          "ind1": "4",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "A/54/PV.83"
+            }
+          ]
+        }
+      },
+      {
+        "995": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Urges all States to refrain from adopting or implementing any unilateral measures; rejects unilateral coercive measures with all their extraterritorial effects as tools for political or economic pressure against any country; calls upon Member States that have initiated such measures to commit themselves to their obligations and responsibilities arising from the international human rights instruments to which they are party by revoking such measures at the earliest time possible; urges the Commission on Human Rights to take fully into account the negative impact of unilateral coercive measures; requests the UN High Commissioner for Human Rights to give priority to the present resolution in her annual report to the General Assembly; requests the Secretary-General to bring the present resolution to the attention of all Member States."
+            }
+          ]
+        }
+      },
+      {
+        "996": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "Adopted 109-48-7, 83rd meeting"
+            }
+          ]
+        }
+      },
+      {
+        "998": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "19991223000000"
+            },
+            {
+              "b": "rrcat"
+            },
+            {
+              "c": "20100316094900"
+            },
+            {
+              "d": "amcat"
+            },
+            {
+              "x": "0x00010000a069ebdb"
+            },
+            {
+              "z": "20200217173843"
+            }
+          ]
+        }
+      },
+      {
+        "999": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "pg"
+            },
+            {
+              "b": "20000726"
+            },
+            {
+              "c": "u"
+            }
+          ]
+        }
+      },
+      {
+        "999": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "rt"
+            },
+            {
+              "b": "20000414"
+            },
+            {
+              "c": "u"
+            }
+          ]
+        }
+      },
+      {
+        "999": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "ac"
+            },
+            {
+              "b": "20000310"
+            },
+            {
+              "c": "c"
+            }
+          ]
+        }
+      },
+      {
+        "999": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "et"
+            },
+            {
+              "b": "20000310"
+            },
+            {
+              "c": "u"
+            }
+          ]
+        }
+      },
+      {
+        "999": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "rk"
+            },
+            {
+              "b": "19991223"
+            },
+            {
+              "c": "p"
+            }
+          ]
+        }
+      },
+      {
+        "999": {
+          "ind1": " ",
+          "ind2": " ",
+          "subfields": [
+            {
+              "a": "TA"
+            },
+            {
+              "b": "20000403"
+            },
+            {
+              "c": "r"
+            }
+          ]
+        }
+      }
+    ]
+  }
+]
