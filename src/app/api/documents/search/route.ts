@@ -1,57 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db/db";
 
-interface DocumentRow {
-  recid: number | null;
-  display_identifier: string | null;
-  title_primary: string | null;
-  publication_date_primary: string | null;
-  datestamp: string;
+interface SearchRow {
+  recid: number;
+  document_symbol: string | null;
+  title: string | null;
+  date_publication: string | null;
+  un_body: string | null;
+  resource_type: string | null;
 }
 
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams.get("q")?.trim();
   if (!q || q.length < 2) return NextResponse.json([]);
 
-  const rows = await query<DocumentRow>(
+  const rows = await query<SearchRow>(
     `SELECT
        recid,
-       COALESCE(
-         NULLIF(document_symbol, ''),
-         (
-           SELECT ident
-           FROM unnest(dc_identifier) AS ident
-           WHERE ident !~ '^https?://'
-           LIMIT 1
-         )
-       ) AS display_identifier,
-       title_primary,
-       publication_date_primary,
-       datestamp::text
+       document_symbol,
+       title,
+       date_publication::text,
+       un_body,
+       resource_type
      FROM digitallibrary.documents
-     WHERE deleted = FALSE
+     WHERE deleted_at IS NULL
        AND (
          document_symbol ILIKE $1 || '%'
-         OR title_primary ILIKE '%' || $1 || '%'
-         OR EXISTS (
-           SELECT 1
-           FROM unnest(dc_identifier) AS ident
-           WHERE ident ILIKE $1 || '%'
-              OR ident ILIKE '%' || $1 || '%'
-         )
+         OR title ILIKE '%' || $1 || '%'
+         OR recid::text = $1
        )
      ORDER BY
        CASE
          WHEN document_symbol ILIKE $1 || '%' THEN 0
-         WHEN EXISTS (
-           SELECT 1
-           FROM unnest(dc_identifier) AS ident
-           WHERE ident !~ '^https?://'
-             AND ident ILIKE $1 || '%'
-         ) THEN 1
+         WHEN title ILIKE $1 || '%' THEN 1
          ELSE 2
        END,
-       datestamp DESC
+       date_publication DESC NULLS LAST
      LIMIT 20`,
     [q],
   );
@@ -59,10 +43,11 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(
     rows.map((r) => ({
       recid: r.recid,
-      symbol: r.display_identifier,
-      title: r.title_primary?.replace(/\s*:\s*$/, "").trim() || null,
-      date: r.publication_date_primary,
-      datestamp: r.datestamp,
+      symbol: r.document_symbol,
+      title: r.title,
+      date: r.date_publication,
+      body: r.un_body,
+      type: r.resource_type,
     })),
   );
 }

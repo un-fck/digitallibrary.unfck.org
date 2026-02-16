@@ -9,42 +9,32 @@ Backed by `digitallibrary.documents`.
 Search strategy:
 
 - prefix match on `document_symbol`
-- full-text-like `ILIKE` on `title_primary`
-- lookup in `dc_identifier` array
+- trigram `ILIKE` on `title` (uses `pg_trgm` GIN index)
+- exact match on `recid` (as string)
 
-Result label strategy:
-
-1. `document_symbol` when present
-2. first non-URL `dc_identifier`
-3. fallback (rare)
-
-This avoids displaying raw record URLs as the primary dropdown label.
+Returns: `recid`, `symbol`, `title`, `date`, `body`, `type`
 
 ## Detail endpoint
 
 - `GET /api/documents/:recid`
 
-Returns:
+Returns all extracted MARC fields plus raw `marcxml` for the XML viewer.
 
-- header/core fields
-- all normalized `dc_*` arrays
-- payload fields mapped for UI viewer:
-  - `metadata_json` => `marcxml_json`
-  - `metadata_xml` => `marcxml_xml`
+Structured fields returned as JSON:
+- `files` — `[{url, lang, size, uuid}]`
+- `corporate_authors` — `[{name, type}]`
+- `agenda_items` — `[{doc, item, desc, topic}]`
+- `related_documents` — `[{symbol, relationship}]`
 
-The UI uses this to render:
-
-- metadata table
-- JSON tree
-- XML code block
+Array fields: `languages`, `subjects`, `notes`, `collections`
 
 ## UI components
 
 - `src/components/DocumentSearch.tsx`
-  - autocomplete input and dropdown
+  - autocomplete input with dropdown showing symbol, title, body, type
 - `src/components/DocumentExplorer.tsx`
   - selection state
-  - tabs for table/json/xml render
+  - tabs: Metadata (semantic sections) / JSON / MARCXML
 
 ## Public routing behavior
 
@@ -53,4 +43,3 @@ Main page is public:
 - `/` is not auth-gated in `src/proxy.ts`
 
 Protected routes still require valid session token.
-

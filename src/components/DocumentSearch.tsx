@@ -7,7 +7,8 @@ export interface SearchResult {
   symbol: string | null;
   title: string | null;
   date: string | null;
-  datestamp: string;
+  body: string | null;
+  type: string | null;
 }
 
 interface Props {
@@ -123,11 +124,16 @@ export function DocumentSearch({
                   {doc.symbol || `RECID ${doc.recid ?? "?"}`}
                 </span>
                 <span className="text-xs text-gray-400">
-                  {doc.date || new Date(doc.datestamp).toISOString().slice(0, 10)}
+                  {doc.date || ""}
                 </span>
               </div>
               {doc.title && (
                 <p className="truncate text-xs text-gray-600">{doc.title}</p>
+              )}
+              {(doc.body || doc.type) && (
+                <p className="truncate text-xs text-gray-400">
+                  {[doc.body, doc.type].filter(Boolean).join(" · ")}
+                </p>
               )}
             </button>
           ))}

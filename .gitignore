@@ -257,3 +257,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Harvest state files
+python/.harvest_state.json
+python/.harvest_incremental_state.json

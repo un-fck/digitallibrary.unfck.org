@@ -2,33 +2,36 @@ import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db/db";
 
 interface DocumentDetailRow {
-  oai_identifier: string;
-  recid: number | null;
-  datestamp: string;
-  deleted: boolean;
-  metadata_prefix: string;
-  source_set: string | null;
-  source_url: string | null;
+  recid: number;
   document_symbol: string | null;
-  title_primary: string | null;
-  publication_date_primary: string | null;
-  dc_title: string[];
-  dc_creator: string[];
-  dc_subject: string[];
-  dc_description: string[];
-  dc_publisher: string[];
-  dc_contributor: string[];
-  dc_date: string[];
-  dc_type: string[];
-  dc_format: string[];
-  dc_identifier: string[];
-  dc_source: string[];
-  dc_language: string[];
-  dc_relation: string[];
-  dc_coverage: string[];
-  dc_rights: string[];
-  metadata_xml: string | null;
-  metadata_json: unknown;
+  symbol_body: string | null;
+  symbol_session: string | null;
+  symbol_committee: string | null;
+  title: string | null;
+  title_statement: string | null;
+  date_publication: string | null;
+  date_text: string | null;
+  publisher: string | null;
+  pub_place: string | null;
+  physical_desc: string | null;
+  doc_class_code: string | null;
+  doc_class_desc: string | null;
+  languages: string[];
+  subjects: string[];
+  corporate_authors: Array<{ name: string; type: string | null }>;
+  un_body: string | null;
+  un_committee: string | null;
+  notes: string[];
+  summary: string | null;
+  files: Array<{ url: string; lang: string | null; size: string | null; uuid: string | null }>;
+  collections: string[];
+  resource_type: string | null;
+  resource_subtype: string | null;
+  vote_summary: string | null;
+  agenda_items: Array<{ doc: string | null; item: string | null; desc: string | null; topic: string | null }>;
+  related_documents: Array<{ symbol: string; relationship: string | null }>;
+  marcxml: string;
+  harvested_at: string;
 }
 
 export async function GET(
@@ -43,36 +46,17 @@ export async function GET(
 
   const rows = await query<DocumentDetailRow>(
     `SELECT
-       oai_identifier,
-       recid,
-       datestamp::text,
-       deleted,
-       metadata_prefix,
-       source_set,
-       source_url,
-       document_symbol,
-       title_primary,
-       publication_date_primary,
-       dc_title,
-       dc_creator,
-       dc_subject,
-       dc_description,
-       dc_publisher,
-       dc_contributor,
-       dc_date,
-       dc_type,
-       dc_format,
-       dc_identifier,
-       dc_source,
-       dc_language,
-       dc_relation,
-       dc_coverage,
-       dc_rights,
-       marcxml_xml AS metadata_xml,
-       marcxml_json AS metadata_json
+       recid, document_symbol, symbol_body, symbol_session, symbol_committee,
+       title, title_statement,
+       date_publication::text, date_text, publisher, pub_place, physical_desc,
+       doc_class_code, doc_class_desc,
+       languages, subjects, corporate_authors, un_body, un_committee,
+       notes, summary, files, collections,
+       resource_type, resource_subtype, vote_summary,
+       agenda_items, related_documents,
+       marcxml, harvested_at::text
      FROM digitallibrary.documents
-     WHERE recid = $1
-     ORDER BY datestamp DESC
+     WHERE recid = $1 AND deleted_at IS NULL
      LIMIT 1`,
     [parsed],
   );
