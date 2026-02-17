@@ -1,28 +1,88 @@
 # digitallibrary.unfck.org
 
-Next.js app for exploring UN Digital Library metadata, backed by PostgreSQL and synced from UNDL OAI-PMH.
+Next.js app + FastAPI backend for exploring UN Digital Library metadata, backed by PostgreSQL and synced from the UN Digital Library search API.
 
 ## What this app does
 
-- Public home page (`/`) with document search.
-- Search over synced metadata from `digitallibrary.documents`.
-- Detail view showing:
-  - normalized Dublin Core fields
-  - MARC payload as JSON tree and XML code view
-- Auth flow still exists (`/login`, `/verify`) for protected areas.
+- Public home page (`/`) with full-text document search.
+- Detail view showing normalized MARC fields, JSON tree, and raw MARCXML.
+- REST API (`/v1/`) for programmatic access to 767K+ UN documents.
+- Developer dashboard (`/developer`) for API key management and usage stats.
+- Auth flow (`/login`, `/verify`) — open to anyone via magic link.
 
-## Data source
+## REST API
 
-UNDL OAI-PMH endpoint:
+The FastAPI backend exposes a public API at `/v1/`. Interactive docs are at `/v1/docs` (Swagger) and `/v1/redoc`.
 
-- `https://digitallibrary.un.org/oai2d`
+### Endpoints
 
-Formats used:
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/documents` | List / search documents with filters |
+| `GET` | `/v1/documents/recid/{recid}` | Get document by record ID |
+| `GET` | `/v1/documents/{symbol}` | Get document by UN symbol |
+| `GET` | `/v1/documents/recid/{recid}/marcxml` | Get raw MARCXML for a record |
+| `GET` | `/v1/search` | Full-text search |
+| `GET` | `/v1/facets` | Faceted search / filtering |
+| `GET` | `/v1/stats` | Collection statistics |
 
-- `oai_dc` for normalized `dc_*` columns
-- `marcxml` for full MARC payload (`marcxml_json`, `marcxml_xml`)
+### Authentication
 
-Important: OAI returns one metadata format per request. “Both in one go” means one sync command that runs both format passes sequentially.
+Anonymous access is available at 10 req/min. For higher limits, sign up for a free API key — open to anyone, no UN affiliation required.
+
+```
+POST /v1/keys/signup    — request a key (sends verification email)
+POST /v1/keys/verify    — verify email and receive key
+GET  /v1/keys/me        — key info (requires key)
+GET  /v1/keys/me/usage  — usage stats (requires key)
+POST /v1/keys/rotate    — revoke + reissue (requires key)
+```
+
+Pass your key via header or query param:
+
+```bash
+curl -H "Authorization: Bearer undl_live_xxxx" \
+  https://digitallibrary.unfck.org/v1/documents?q=A/RES/78
+
+# or
+curl "https://digitallibrary.unfck.org/v1/search?q=climate+change&api_key=undl_live_xxxx"
+```
+
+### Rate limits
+
+| Tier | Requests/min | Daily |
+|------|-------------|-------|
+| Anonymous | 10 | 100 |
+| Free | 60 | 10,000 |
+| Research | 300 | 100,000 |
+| Institutional | 1,000 | Unlimited |
+
+## Data pipeline
+
+### Full harvest
+
+Bulk harvest of all "Documents and Publications" from the UN Digital Library search API using record ID range slicing. Fetches MARCXML, parses 30+ structured fields, and upserts into PostgreSQL.
+
+```bash
+uv run python python/harvest_full.py                   # fresh start
+uv run python python/harvest_full.py --resume          # continue from checkpoint
+uv run python python/harvest_full.py --max-records 500 # limited test run
+uv run python python/harvest_full.py --dry-run         # parse only, no DB writes
+```
+
+### Incremental harvest
+
+Nightly sync of new/changed records since the last run. Designed for GitHub Actions — state is stored in the database so it works across ephemeral CI runners.
+
+```bash
+uv run python python/harvest_incremental.py                    # auto (reads watermark from DB)
+uv run python python/harvest_incremental.py --since 2026-02-15
+uv run python python/harvest_incremental.py --dry-run
+```
+
+### MARC parser
+
+`python/marc_parser.py` parses MARC21 XML into 30+ structured fields: subjects, authors, agendas, voting records, files, languages, and more.
 
 ## Quick start
 
@@ -43,6 +103,7 @@ uv sync
 ```bash
 psql "$DATABASE_URL" -f sql/auth_tables.sql
 psql "$DATABASE_URL" -f sql/create_digitallibrary_user.sql
+psql "$DATABASE_URL" -f sql/api_tables.sql
 ```
 
 4. Apply document schema:
@@ -51,17 +112,20 @@ psql "$DATABASE_URL" -f sql/create_digitallibrary_user.sql
 psql "$DATABASE_URL" -f sql/documents_tables.sql
 ```
 
-5. Run OAI sync (DC + MARC) from 2025:
+5. Run full harvest (or incremental):
 
 ```bash
 DATABASE_URL="$DATABASE_URL&sslrootcert=/etc/ssl/cert.pem" \
-uv run python python/sync_oai_to_db.py \
-  --from 2025-01-01T00:00:00Z \
-  --prefixes oai_dc,marcxml \
-  --resume
+uv run python python/harvest_full.py --resume
 ```
 
-6. Run app:
+6. Start the FastAPI backend:
+
+```bash
+uv run uvicorn api.main:app --reload --port 8000
+```
+
+7. Run the Next.js frontend:
 
 ```bash
 pnpm dev
@@ -69,20 +133,39 @@ pnpm dev
 
 ## Core files
 
-- `sql/documents_tables.sql`:
-  document metadata schema
-- `python/sync_oai_to_db.py`:
-  dual-prefix OAI sync into Postgres
-- `src/app/api/documents/search/route.ts`:
-  search API from `digitallibrary.documents`
-- `src/app/api/documents/[recid]/route.ts`:
-  document detail API (includes MARC payload)
-- `src/components/DocumentExplorer.tsx`:
-  search + metadata render (table/json/xml)
+### Frontend (Next.js)
+
+- `src/app/page.tsx`: home page with document search
+- `src/app/about/page.tsx`: about page
+- `src/app/developer/page.tsx`: developer dashboard (API key management)
+- `src/components/DocumentExplorer.tsx`: search + metadata render (table/json/xml)
+- `src/components/DeveloperDashboard.tsx`: API key, usage stats, quick start
+
+### API (FastAPI)
+
+- `api/main.py`: FastAPI app with CORS, rate limiting, router mounting
+- `api/routers/documents.py`: document list/detail/symbol/marcxml endpoints
+- `api/routers/search.py`: full-text search endpoint
+- `api/routers/facets.py`: faceted filtering
+- `api/routers/stats.py`: collection statistics
+- `api/routers/api_keys.py`: API key signup, verify, info, rotate
+- `api/services/key_service.py`: key generation, hashing, usage tracking
+- `api/services/rate_limit.py`: rate limiting via slowapi
+
+### Data pipeline (Python)
+
+- `python/harvest_full.py`: bulk harvest via search API with recid range slicing
+- `python/harvest_incremental.py`: nightly incremental sync
+- `python/marc_parser.py`: MARC21 XML to structured fields
+
+### Database
+
+- `sql/documents_tables.sql`: document metadata schema
+- `sql/auth_tables.sql`: users, magic tokens, allowed domains
+- `sql/api_tables.sql`: API users, keys, verification tokens, usage log
 
 ## Documentation
 
 - `docs/data-model.md`
 - `docs/oai-sync.md`
 - `docs/app-api.md`
-
