@@ -1,71 +1,166 @@
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import {
+  ArrowRight,
+  Database,
+  Search,
+  RefreshCw,
+  BookOpen,
+} from "lucide-react";
 import { getCurrentUser } from "@/features/auth/service";
-import { Header, SITE_TITLE, SITE_SUBTITLE } from "@/components/Header";
+import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 
 export const dynamic = "force-dynamic";
 
+function FeatureCard({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: React.ElementType;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-un-blue/10">
+        <Icon className="h-5 w-5 text-un-blue" />
+      </div>
+      <h4 className="mb-1.5 text-sm font-semibold text-gray-900">{title}</h4>
+      <p className="text-sm leading-relaxed text-gray-500">{description}</p>
+    </div>
+  );
+}
+
+function StatCard({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="text-center">
+      <div className="text-3xl font-bold tracking-tight text-gray-900">
+        {value}
+      </div>
+      <div className="mt-1 text-xs font-medium text-gray-400 uppercase tracking-wide">
+        {label}
+      </div>
+    </div>
+  );
+}
+
 export default async function AboutPage() {
   const user = await getCurrentUser();
-  const isLoggedIn = !!user;
-  const ctaHref = isLoggedIn ? "/" : "/login";
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <Header user={user} maxWidth="6xl" hideAbout />
-      <main className="flex-1 bg-gradient-to-b from-gray-50 to-white">
-        <section className="mx-auto max-w-6xl px-4 py-16 text-center">
-          <h2 className="mb-4 text-4xl font-bold tracking-tight text-gray-900">
-            {SITE_TITLE}
-          </h2>
-          <p className="mx-auto mb-8 max-w-2xl text-lg text-gray-600">
-            {SITE_SUBTITLE}
-          </p>
-          <div className="flex items-center justify-center gap-4">
-            <Link
-              href={ctaHref}
-              className="inline-flex items-center gap-2 rounded-lg bg-un-blue px-6 py-3 font-medium text-white transition-colors hover:bg-un-blue/90"
-            >
-              {isLoggedIn ? "Go to Dashboard" : "Get Started"}
-              <ArrowRight className="h-4 w-4" />
-            </Link>
+    <div className="flex min-h-screen flex-col bg-gray-50">
+      <Header user={user} maxWidth="5xl" hideAbout />
+      <main className="flex-1">
+        {/* Hero */}
+        <section className="bg-white border-b border-gray-200">
+          <div className="mx-auto max-w-5xl px-4 py-16 text-center sm:px-6">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-un-blue/10">
+              <BookOpen className="h-7 w-7 text-un-blue" />
+            </div>
+            <h2 className="mb-3 text-3xl font-bold tracking-tight text-gray-900">
+              UN Digital Library
+            </h2>
+            <p className="mx-auto max-w-2xl text-base leading-relaxed text-gray-500">
+              An open-source interface to explore 767,000+ United Nations
+              documents including resolutions, reports, meeting records, and
+              more. Built on data harvested directly from{" "}
+              <a
+                href="https://digitallibrary.un.org"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-un-blue underline decoration-un-blue/30 underline-offset-2 hover:decoration-un-blue"
+              >
+                digitallibrary.un.org
+              </a>
+              .
+            </p>
+            <div className="mt-8">
+              <Link
+                href="/"
+                className="inline-flex items-center gap-2 rounded-lg bg-un-blue px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-un-blue/90"
+              >
+                Explore Documents
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
           </div>
         </section>
 
-        <section className="mx-auto max-w-4xl px-4 pb-16">
-          <h3 className="mb-8 text-center text-sm font-semibold tracking-wider text-gray-400 uppercase">
+        {/* Stats */}
+        <section className="mx-auto max-w-5xl px-4 py-12 sm:px-6">
+          <div className="grid grid-cols-3 gap-8 rounded-xl border border-gray-200 bg-white p-8 shadow-sm">
+            <StatCard value="767K+" label="Documents" />
+            <StatCard value="6" label="UN Languages" />
+            <StatCard value="Nightly" label="Sync" />
+          </div>
+        </section>
+
+        {/* Features */}
+        <section className="mx-auto max-w-5xl px-4 pb-12 sm:px-6">
+          <h3 className="mb-6 text-center text-xs font-semibold tracking-widest text-gray-400 uppercase">
+            Features
+          </h3>
+          <div className="grid gap-4 md:grid-cols-3">
+            <FeatureCard
+              icon={Search}
+              title="Full-text Search"
+              description="Search by document symbol, title, or record ID across the entire UN Documents and Publications collection."
+            />
+            <FeatureCard
+              icon={Database}
+              title="Structured Data"
+              description="Every document is parsed from MARCXML into structured fields: subjects, authors, agendas, voting records, and files."
+            />
+            <FeatureCard
+              icon={RefreshCw}
+              title="Nightly Updates"
+              description="An automated pipeline syncs new and modified records from the UN Digital Library every night."
+            />
+          </div>
+        </section>
+
+        {/* How it works */}
+        <section className="mx-auto max-w-5xl px-4 pb-16 sm:px-6">
+          <h3 className="mb-6 text-center text-xs font-semibold tracking-widest text-gray-400 uppercase">
             How It Works
           </h3>
-          <div className="grid gap-8 md:grid-cols-3">
-            <div className="text-center">
-              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-un-blue text-lg font-bold text-white">
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="flex gap-3 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-un-blue text-xs font-bold text-white">
                 1
               </div>
-              <h4 className="mb-2 font-semibold text-gray-900">Sign In</h4>
-              <p className="text-sm text-gray-600">
-                Enter your email and click the magic link sent to your inbox.
-              </p>
+              <div>
+                <h4 className="text-sm font-semibold text-gray-900">Harvest</h4>
+                <p className="mt-1 text-sm text-gray-500">
+                  MARCXML records are fetched from the UN search API using record
+                  ID range slicing.
+                </p>
+              </div>
             </div>
-            <div className="text-center">
-              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-un-blue text-lg font-bold text-white">
+            <div className="flex gap-3 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-un-blue text-xs font-bold text-white">
                 2
               </div>
-              <h4 className="mb-2 font-semibold text-gray-900">
-                Select Entity
-              </h4>
-              <p className="text-sm text-gray-600">
-                Choose your organisational entity on first sign-in.
-              </p>
+              <div>
+                <h4 className="text-sm font-semibold text-gray-900">Parse</h4>
+                <p className="mt-1 text-sm text-gray-500">
+                  Each MARC21 record is parsed into 30+ structured fields and
+                  stored in PostgreSQL.
+                </p>
+              </div>
             </div>
-            <div className="text-center">
-              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-un-blue text-lg font-bold text-white">
+            <div className="flex gap-3 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-un-blue text-xs font-bold text-white">
                 3
               </div>
-              <h4 className="mb-2 font-semibold text-gray-900">Get Started</h4>
-              <p className="text-sm text-gray-600">
-                Access the dashboard and start using the application.
-              </p>
+              <div>
+                <h4 className="text-sm font-semibold text-gray-900">Explore</h4>
+                <p className="mt-1 text-sm text-gray-500">
+                  Documents are searchable and viewable with metadata, JSON, and
+                  raw MARCXML views.
+                </p>
+              </div>
             </div>
           </div>
         </section>

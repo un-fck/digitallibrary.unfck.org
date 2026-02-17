@@ -1,6 +1,6 @@
 "use client";
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Search, Loader2 } from "lucide-react";
+import { Search, Loader2, FileText, Building2, Calendar } from "lucide-react";
 
 export interface SearchResult {
   recid: number | null;
@@ -27,6 +27,7 @@ export function DocumentSearch({
   const [highlighted, setHighlighted] = useState(-1);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const search = useCallback((q: string) => {
     if (q.length < 2) {
@@ -80,6 +81,14 @@ export function DocumentSearch({
     }
   };
 
+  // Scroll highlighted item into view
+  useEffect(() => {
+    if (highlighted >= 0 && listRef.current) {
+      const el = listRef.current.children[highlighted] as HTMLElement;
+      el?.scrollIntoView({ block: "nearest" });
+    }
+  }, [highlighted]);
+
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (
@@ -95,7 +104,7 @@ export function DocumentSearch({
   return (
     <div ref={containerRef} className="relative w-full">
       <div className="relative">
-        <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-gray-400" />
+        <Search className="absolute top-1/2 left-4 h-5 w-5 -translate-y-1/2 text-gray-400" />
         <input
           type="text"
           value={query}
@@ -103,47 +112,78 @@ export function DocumentSearch({
           onKeyDown={handleKeyDown}
           onFocus={() => results.length > 0 && setOpen(true)}
           placeholder={placeholder}
-          className="w-full rounded-lg border border-gray-300 py-2 pr-10 pl-10 text-sm focus:border-un-blue focus:ring-1 focus:ring-un-blue focus:outline-none"
+          className="w-full rounded-xl border border-gray-200 bg-white py-3.5 pr-12 pl-12 text-sm shadow-sm transition-all placeholder:text-gray-400 focus:border-un-blue focus:ring-2 focus:ring-un-blue/20 focus:outline-none"
         />
         {searching && (
-          <Loader2 className="absolute top-1/2 right-3 h-4 w-4 -translate-y-1/2 animate-spin text-gray-400" />
+          <Loader2 className="absolute top-1/2 right-4 h-5 w-5 -translate-y-1/2 animate-spin text-un-blue" />
         )}
       </div>
 
       {open && results.length > 0 && (
-        <div className="absolute z-50 mt-1 max-h-80 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+        <div
+          ref={listRef}
+          className="absolute z-50 mt-2 max-h-96 w-full overflow-y-auto rounded-xl border border-gray-200 bg-white py-1 shadow-xl"
+        >
           {results.map((doc, i) => (
             <button
               key={doc.recid ?? `${doc.symbol}-${i}`}
               onClick={() => handleSelect(doc)}
               onMouseEnter={() => setHighlighted(i)}
-              className={`w-full px-3 py-2 text-left ${highlighted === i ? "bg-gray-100" : ""}`}
+              className={`w-full px-4 py-3 text-left transition-colors ${
+                highlighted === i ? "bg-un-blue/5" : "hover:bg-gray-50"
+              }`}
             >
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-un-blue">
-                  {doc.symbol || `RECID ${doc.recid ?? "?"}`}
-                </span>
-                <span className="text-xs text-gray-400">
-                  {doc.date || ""}
-                </span>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    {doc.symbol ? (
+                      <span className="inline-flex items-center rounded-md border border-un-blue/15 bg-un-blue/8 px-2 py-0.5 text-xs font-semibold text-un-blue">
+                        {doc.symbol}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-xs text-gray-400">
+                        <FileText className="h-3 w-3" />
+                        #{doc.recid ?? "?"}
+                      </span>
+                    )}
+                    {doc.type && (
+                      <span className="text-xs text-gray-400">{doc.type}</span>
+                    )}
+                  </div>
+                  {doc.title && (
+                    <p className="mt-1 truncate text-sm text-gray-700">
+                      {doc.title}
+                    </p>
+                  )}
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-1 pt-0.5">
+                  {doc.date && (
+                    <span className="flex items-center gap-1 text-xs text-gray-400">
+                      <Calendar className="h-3 w-3" />
+                      {doc.date}
+                    </span>
+                  )}
+                  {doc.body && (
+                    <span className="flex items-center gap-1 text-xs text-gray-400">
+                      <Building2 className="h-3 w-3" />
+                      {doc.body}
+                    </span>
+                  )}
+                </div>
               </div>
-              {doc.title && (
-                <p className="truncate text-xs text-gray-600">{doc.title}</p>
-              )}
-              {(doc.body || doc.type) && (
-                <p className="truncate text-xs text-gray-400">
-                  {[doc.body, doc.type].filter(Boolean).join(" · ")}
-                </p>
-              )}
             </button>
           ))}
         </div>
       )}
 
       {open && query.length >= 2 && results.length === 0 && !searching && (
-        <div className="absolute z-50 mt-1 w-full rounded-lg border border-gray-200 bg-white p-3 shadow-lg">
-          <p className="text-sm text-gray-500">
-            No documents found for &ldquo;{query}&rdquo;
+        <div className="absolute z-50 mt-2 w-full rounded-xl border border-gray-200 bg-white p-6 text-center shadow-xl">
+          <Search className="mx-auto mb-2 h-6 w-6 text-gray-300" />
+          <p className="text-sm font-medium text-gray-500">
+            No documents found
+          </p>
+          <p className="mt-0.5 text-xs text-gray-400">
+            Try a different symbol, title, or record ID
           </p>
         </div>
       )}

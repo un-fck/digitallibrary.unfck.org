@@ -5,6 +5,25 @@ import { DocumentSearch, type SearchResult } from "@/components/DocumentSearch";
 import { JsonView, allExpanded, defaultStyles } from "react-json-view-lite";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
+import {
+  Calendar,
+  Building2,
+  FileDown,
+  Globe,
+  Hash,
+  Loader2,
+  Scale,
+  Tag as TagIcon,
+  Users,
+  BookOpen,
+  Link as LinkIcon,
+  ClipboardList,
+  Vote,
+} from "lucide-react";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 interface FileEntry {
   url: string;
@@ -63,15 +82,55 @@ interface DocumentDetail {
   harvested_at: string;
 }
 
-function Tag({ children }: { children: React.ReactNode }) {
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
+function Chip({
+  children,
+  variant = "default",
+}: {
+  children: React.ReactNode;
+  variant?: "default" | "blue" | "muted";
+}) {
+  const styles = {
+    default:
+      "bg-gray-100 text-gray-700 border-gray-200",
+    blue: "bg-un-blue/8 text-un-blue border-un-blue/15",
+    muted: "bg-gray-50 text-gray-500 border-gray-200",
+  };
   return (
-    <span className="inline-block rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
+    <span
+      className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${styles[variant]}`}
+    >
       {children}
     </span>
   );
 }
 
-function Section({
+function SectionCard({
+  icon: Icon,
+  title,
+  children,
+}: {
+  icon: React.ElementType;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div className="flex items-center gap-2 border-b border-gray-100 px-4 py-3">
+        <Icon className="h-4 w-4 text-gray-400" />
+        <h4 className="text-xs font-semibold tracking-wide text-gray-500 uppercase">
+          {title}
+        </h4>
+      </div>
+      <div className="px-4 py-3">{children}</div>
+    </div>
+  );
+}
+
+function Field({
   label,
   children,
 }: {
@@ -79,14 +138,24 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div className="grid grid-cols-[160px_1fr] gap-3 px-4 py-2.5">
-      <div className="text-xs font-semibold tracking-wide text-gray-500 uppercase">
-        {label}
-      </div>
-      <div className="text-sm text-gray-800 break-words">{children}</div>
+    <div className="py-1.5">
+      <dt className="text-xs font-medium text-gray-400">{label}</dt>
+      <dd className="mt-0.5 text-sm text-gray-800">{children}</dd>
     </div>
   );
 }
+
+function formatSize(bytes: string | null): string {
+  if (!bytes) return "";
+  const n = Number(bytes);
+  if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+  return `${n} B`;
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
 
 export function DocumentExplorer() {
   const [selected, setSelected] = useState<SearchResult | null>(null);
@@ -138,220 +207,265 @@ export function DocumentExplorer() {
         onSelect={handleSelect}
         placeholder="Search by symbol, title, or record ID..."
       />
-      {selected && (
-        <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
-          Selected: {selected.symbol || selected.title || selected.recid}
-        </div>
-      )}
+
+      {/* Loading */}
       {loading && (
-        <div className="rounded-lg border border-gray-200 bg-white p-4 text-sm text-gray-600">
-          Loading metadata...
+        <div className="flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white py-12 shadow-sm">
+          <Loader2 className="h-5 w-5 animate-spin text-un-blue" />
+          <span className="text-sm text-gray-500">Loading document...</span>
         </div>
       )}
+
+      {/* Error */}
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
       )}
+
+      {/* Document detail */}
       {doc && (
-        <div className="space-y-3">
+        <div className="space-y-4">
+          {/* Title card */}
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                {doc.document_symbol && (
+                  <div className="mb-1.5 flex items-center gap-2">
+                    <Chip variant="blue">{doc.document_symbol}</Chip>
+                    {doc.resource_subtype && (
+                      <Chip variant="muted">{doc.resource_subtype}</Chip>
+                    )}
+                  </div>
+                )}
+                <h3 className="text-lg leading-snug font-semibold text-gray-900">
+                  {doc.title || `Record ${doc.recid}`}
+                </h3>
+                {doc.title_statement && (
+                  <p className="mt-1 text-sm text-gray-500">
+                    {doc.title_statement}
+                  </p>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5 text-xs text-gray-400">
+                <Hash className="h-3.5 w-3.5" />
+                {doc.recid}
+              </div>
+            </div>
+
+            {/* Quick facts row */}
+            <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-gray-100 pt-3 text-xs text-gray-500">
+              {doc.un_body && (
+                <span className="flex items-center gap-1">
+                  <Building2 className="h-3.5 w-3.5" />
+                  {doc.un_body}
+                  {doc.un_committee && (
+                    <span className="text-gray-400">
+                      / {doc.un_committee}
+                    </span>
+                  )}
+                </span>
+              )}
+              {doc.date_publication && (
+                <span className="flex items-center gap-1">
+                  <Calendar className="h-3.5 w-3.5" />
+                  {doc.date_publication}
+                  {doc.date_text &&
+                    doc.date_text !== doc.date_publication && (
+                      <span className="text-gray-400">({doc.date_text})</span>
+                    )}
+                </span>
+              )}
+              {doc.languages.length > 0 && (
+                <span className="flex items-center gap-1">
+                  <Globe className="h-3.5 w-3.5" />
+                  {doc.languages.join(", ")}
+                </span>
+              )}
+              {doc.resource_type && (
+                <span className="flex items-center gap-1">
+                  <BookOpen className="h-3.5 w-3.5" />
+                  {doc.resource_type}
+                </span>
+              )}
+            </div>
+          </div>
+
           {/* View mode tabs */}
-          <div className="flex gap-2">
-            {(["table", "json", "xml"] as const).map((mode) => (
+          <div className="flex gap-1 rounded-lg bg-gray-100 p-1">
+            {(
+              [
+                ["table", "Metadata"],
+                ["json", "JSON"],
+                ["xml", "MARCXML"],
+              ] as const
+            ).map(([mode, label]) => (
               <button
                 key={mode}
                 type="button"
-                className={`rounded-md px-3 py-1.5 text-sm ${viewMode === mode ? "bg-un-blue text-white" : "bg-gray-100 text-gray-700"}`}
+                className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  viewMode === mode
+                    ? "bg-white text-gray-900 shadow-sm"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
                 onClick={() => setViewMode(mode)}
               >
-                {mode === "table"
-                  ? "Metadata"
-                  : mode === "json"
-                    ? "JSON"
-                    : "MARCXML"}
+                {label}
               </button>
             ))}
           </div>
 
-          {/* Metadata table view */}
+          {/* Metadata view */}
           {viewMode === "table" && (
-            <div className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white">
-              {/* Identity */}
-              <Section label="Record ID">{doc.recid}</Section>
-              {doc.document_symbol && (
-                <Section label="Symbol">{doc.document_symbol}</Section>
-              )}
-              {doc.title && <Section label="Title">{doc.title}</Section>}
-              {doc.title_statement && (
-                <Section label="Responsibility">{doc.title_statement}</Section>
-              )}
-
-              {/* Classification */}
-              {doc.un_body && (
-                <Section label="UN Body">
-                  {doc.un_body}
-                  {doc.un_committee && ` / ${doc.un_committee}`}
-                </Section>
-              )}
-              {doc.resource_type && (
-                <Section label="Type">
-                  {doc.resource_type}
-                  {doc.resource_subtype && ` / ${doc.resource_subtype}`}
-                </Section>
-              )}
-              {doc.doc_class_desc && (
-                <Section label="Classification">
-                  {doc.doc_class_desc}
-                  {doc.doc_class_code && (
-                    <span className="ml-1 text-gray-400">
-                      ({doc.doc_class_code})
-                    </span>
-                  )}
-                </Section>
-              )}
-
-              {/* Dates */}
-              {(doc.date_publication || doc.date_text) && (
-                <Section label="Date">
-                  {doc.date_publication}
-                  {doc.date_text && doc.date_text !== doc.date_publication && (
-                    <span className="ml-2 text-gray-500">
-                      ({doc.date_text})
-                    </span>
-                  )}
-                </Section>
-              )}
-
-              {/* Languages */}
-              {doc.languages.length > 0 && (
-                <Section label="Languages">
-                  <div className="flex flex-wrap gap-1">
-                    {doc.languages.map((l) => (
-                      <Tag key={l}>{l}</Tag>
-                    ))}
-                  </div>
-                </Section>
-              )}
-
-              {/* Summary */}
-              {doc.summary && (
-                <Section label="Summary">{doc.summary}</Section>
+            <div className="grid gap-4 md:grid-cols-2">
+              {/* Summary & notes */}
+              {(doc.summary || doc.notes.length > 0) && (
+                <div className="md:col-span-2">
+                  <SectionCard icon={BookOpen} title="Summary">
+                    {doc.summary && (
+                      <p className="text-sm leading-relaxed text-gray-700">
+                        {doc.summary}
+                      </p>
+                    )}
+                    {doc.notes.length > 0 && (
+                      <ul className="mt-2 space-y-1">
+                        {doc.notes.map((n, i) => (
+                          <li
+                            key={i}
+                            className="text-sm leading-relaxed text-gray-600"
+                          >
+                            {n}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </SectionCard>
+                </div>
               )}
 
               {/* Subjects */}
               {doc.subjects.length > 0 && (
-                <Section label="Subjects">
-                  <div className="flex flex-wrap gap-1">
+                <SectionCard icon={TagIcon} title="Subjects">
+                  <div className="flex flex-wrap gap-1.5">
                     {doc.subjects.map((s) => (
-                      <Tag key={s}>{s}</Tag>
+                      <Chip key={s}>{s}</Chip>
                     ))}
                   </div>
-                </Section>
+                </SectionCard>
               )}
 
               {/* Authors */}
               {doc.corporate_authors.length > 0 && (
-                <Section label="Authors">
-                  <div className="flex flex-wrap gap-1">
+                <SectionCard icon={Users} title="Authors">
+                  <div className="flex flex-wrap gap-1.5">
                     {doc.corporate_authors.map((a, i) => (
-                      <Tag key={`${a.name}-${i}`}>
+                      <Chip key={`${a.name}-${i}`}>
                         {a.name}
                         {a.type && (
-                          <span className="ml-1 text-gray-400">
-                            [{a.type}]
-                          </span>
+                          <span className="ml-1 text-gray-400">[{a.type}]</span>
                         )}
-                      </Tag>
+                      </Chip>
                     ))}
                   </div>
-                </Section>
-              )}
-
-              {/* Notes */}
-              {doc.notes.length > 0 && (
-                <Section label="Notes">
-                  <ul className="list-inside list-disc space-y-0.5">
-                    {doc.notes.map((n, i) => (
-                      <li key={i}>{n}</li>
-                    ))}
-                  </ul>
-                </Section>
+                </SectionCard>
               )}
 
               {/* Files */}
               {doc.files.length > 0 && (
-                <Section label="Files">
-                  <div className="flex flex-wrap gap-2">
+                <SectionCard icon={FileDown} title="Files">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     {doc.files.map((f, i) => (
                       <a
                         key={i}
                         href={f.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 rounded bg-un-blue/10 px-2 py-1 text-xs text-un-blue hover:bg-un-blue/20"
+                        className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm transition-colors hover:border-un-blue/30 hover:bg-un-blue/5"
                       >
-                        {f.lang || "Download"}
+                        <FileDown className="h-4 w-4 shrink-0 text-un-blue" />
+                        <span className="font-medium text-gray-800">
+                          {f.lang || "Download"}
+                        </span>
                         {f.size && (
-                          <span className="text-gray-400">
-                            ({Math.round(Number(f.size) / 1024)}KB)
+                          <span className="ml-auto text-xs text-gray-400">
+                            {formatSize(f.size)}
                           </span>
                         )}
                       </a>
                     ))}
                   </div>
-                </Section>
+                </SectionCard>
+              )}
+
+              {/* Classification */}
+              {(doc.doc_class_desc || doc.publisher) && (
+                <SectionCard icon={Scale} title="Classification">
+                  {doc.doc_class_desc && (
+                    <Field label="Document class">
+                      {doc.doc_class_desc}
+                      {doc.doc_class_code && (
+                        <span className="ml-1 text-gray-400">
+                          ({doc.doc_class_code})
+                        </span>
+                      )}
+                    </Field>
+                  )}
+                  {doc.publisher && (
+                    <Field label="Publisher">
+                      {[doc.pub_place, doc.publisher]
+                        .filter(Boolean)
+                        .join(", ")}
+                    </Field>
+                  )}
+                  {doc.physical_desc && (
+                    <Field label="Extent">{doc.physical_desc}</Field>
+                  )}
+                </SectionCard>
               )}
 
               {/* Voting */}
               {doc.vote_summary && (
-                <Section label="Vote">{doc.vote_summary}</Section>
+                <SectionCard icon={Vote} title="Voting">
+                  <p className="text-sm text-gray-700">{doc.vote_summary}</p>
+                </SectionCard>
               )}
 
               {/* Agenda items */}
               {doc.agenda_items.length > 0 && (
-                <Section label="Agenda">
-                  <ul className="list-inside list-disc space-y-0.5">
+                <SectionCard icon={ClipboardList} title="Agenda">
+                  <ul className="space-y-1.5">
                     {doc.agenda_items.map((a, i) => (
-                      <li key={i}>
+                      <li key={i} className="text-sm text-gray-700">
                         {a.item && (
-                          <span className="font-medium">Item {a.item}: </span>
+                          <span className="mr-1 font-medium text-gray-900">
+                            Item {a.item}:
+                          </span>
                         )}
                         {a.topic || a.desc || a.doc}
                       </li>
                     ))}
                   </ul>
-                </Section>
+                </SectionCard>
               )}
 
               {/* Related documents */}
               {doc.related_documents.length > 0 && (
-                <Section label="Related">
-                  <div className="flex flex-wrap gap-1">
+                <SectionCard icon={LinkIcon} title="Related Documents">
+                  <div className="flex flex-wrap gap-1.5">
                     {doc.related_documents.map((r, i) => (
-                      <Tag key={`${r.symbol}-${i}`}>{r.symbol}</Tag>
+                      <Chip key={`${r.symbol}-${i}`} variant="blue">
+                        {r.symbol}
+                      </Chip>
                     ))}
                   </div>
-                </Section>
+                </SectionCard>
               )}
-
-              {/* Publication */}
-              {(doc.publisher || doc.pub_place) && (
-                <Section label="Publisher">
-                  {[doc.pub_place, doc.publisher].filter(Boolean).join(", ")}
-                </Section>
-              )}
-              {doc.physical_desc && (
-                <Section label="Extent">{doc.physical_desc}</Section>
-              )}
-
-              {/* Housekeeping */}
-              <Section label="Harvested">{doc.harvested_at}</Section>
             </div>
           )}
 
           {/* JSON view */}
           {viewMode === "json" && (
-            <div className="overflow-auto rounded-lg border border-gray-200 bg-white p-4 text-sm">
+            <div className="overflow-auto rounded-xl border border-gray-200 bg-white p-4 text-sm shadow-sm">
               <JsonView
                 data={jsonData}
                 shouldExpandNode={allExpanded}
@@ -362,11 +476,11 @@ export function DocumentExplorer() {
 
           {/* XML view */}
           {viewMode === "xml" && doc.marcxml && (
-            <div className="overflow-auto rounded-lg border border-gray-200 bg-white">
+            <div className="overflow-auto rounded-xl border border-gray-200 bg-white shadow-sm">
               <SyntaxHighlighter
                 language="xml"
                 style={oneLight}
-                customStyle={{ margin: 0, padding: "1rem" }}
+                customStyle={{ margin: 0, padding: "1rem", borderRadius: "0.75rem" }}
                 wrapLongLines
               >
                 {doc.marcxml}
@@ -374,10 +488,23 @@ export function DocumentExplorer() {
             </div>
           )}
           {viewMode === "xml" && !doc.marcxml && (
-            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">
               No MARCXML payload available for this record.
             </div>
           )}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!doc && !loading && !error && (
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white/50 py-16 text-center">
+          <BookOpen className="mb-3 h-10 w-10 text-gray-300" />
+          <p className="text-sm font-medium text-gray-400">
+            Search for a document to get started
+          </p>
+          <p className="mt-1 text-xs text-gray-400">
+            Try a symbol like A/RES/78/1 or a keyword
+          </p>
         </div>
       )}
     </section>

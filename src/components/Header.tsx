@@ -7,12 +7,12 @@ interface Props {
   user?: { email: string; entity?: string | null } | null;
   children?: React.ReactNode;
   entities?: EntityOption[];
-  maxWidth?: "6xl" | "7xl";
+  maxWidth?: "5xl" | "6xl" | "7xl";
   hideAbout?: boolean;
 }
 
-export const SITE_TITLE = "UN Digital Library 2.0";
-export const SITE_SUBTITLE = "Explore resolutions, reports, and more";
+export const SITE_TITLE = "UN Digital Library";
+export const SITE_SUBTITLE = "Open access to 767K+ documents";
 
 export function Header({
   user,
@@ -22,38 +22,53 @@ export function Header({
   hideAbout = false,
 }: Props) {
   const isLoggedIn = !!user;
-  const widthClass = maxWidth === "6xl" ? "max-w-6xl" : "max-w-7xl";
+  const widthClass =
+    maxWidth === "5xl"
+      ? "max-w-5xl"
+      : maxWidth === "6xl"
+        ? "max-w-6xl"
+        : "max-w-7xl";
 
   return (
     <header className="border-b border-gray-200 bg-white">
       <div
-        className={`mx-auto flex ${widthClass} items-center justify-between px-3 py-4 sm:px-4`}
+        className={`mx-auto flex ${widthClass} items-center justify-between px-4 py-3 sm:px-6`}
       >
         <Link
           href="/"
-          className="flex items-center gap-3 hover:opacity-90"
+          className="flex items-center gap-3 transition-opacity hover:opacity-90"
         >
           <Image
             src="/images/UN_Logo_Stacked_Colour_English.svg"
             alt="UN Logo"
-            width={50}
-            height={50}
+            width={44}
+            height={44}
             priority
-            className="h-12 w-auto select-none"
+            className="h-11 w-auto select-none"
             draggable={false}
           />
           <div>
-            <h1 className="text-xl font-bold text-gray-900">{SITE_TITLE}</h1>
-            <p className="text-xs text-gray-500">{SITE_SUBTITLE}</p>
+            <h1 className="text-lg font-bold tracking-tight text-gray-900">
+              {SITE_TITLE}
+            </h1>
+            <p className="text-xs text-gray-400">{SITE_SUBTITLE}</p>
           </div>
         </Link>
-        <div className="flex items-center gap-4">
+        <nav className="flex items-center gap-3">
           {!hideAbout && (
             <Link
               href="/about"
-              className="text-sm font-medium text-gray-700 transition-colors hover:text-un-blue"
+              className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
             >
               About
+            </Link>
+          )}
+          {isLoggedIn && (
+            <Link
+              href="/developer"
+              className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+            >
+              API
             </Link>
           )}
           {isLoggedIn ? (
@@ -65,13 +80,13 @@ export function Header({
           ) : (
             <Link
               href="/login"
-              className="rounded-lg bg-un-blue px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-un-blue/90"
+              className="rounded-lg bg-un-blue px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-un-blue/90"
             >
               Sign In
             </Link>
           )}
           {children}
-        </div>
+        </nav>
       </div>
     </header>
   );
