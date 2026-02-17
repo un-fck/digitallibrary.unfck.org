@@ -156,6 +156,9 @@ def fetch_marcxml(start: int, end: int, session: requests.Session) -> str:
                 raise requests.RequestException(
                     f"Unexpected status {resp.status_code} (expected 200)"
                 )
+            # Force UTF-8 — server may not declare charset, causing
+            # requests to default to ISO-8859-1 and mangle non-ASCII text.
+            resp.encoding = "utf-8"
             if not resp.text.strip():
                 raise requests.RequestException("Empty response body")
             return resp.text

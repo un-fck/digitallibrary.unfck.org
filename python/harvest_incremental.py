@@ -159,6 +159,9 @@ def fetch_marcxml_range(start: int, end: int, session: requests.Session) -> list
         try:
             resp = session.get(url, timeout=120)
             resp.raise_for_status()
+            # Force UTF-8 — server may not declare charset, causing
+            # requests to default to ISO-8859-1 and mangle non-ASCII text.
+            resp.encoding = "utf-8"
             return _RECORD_RE.findall(resp.text)
         except (requests.RequestException, OSError) as exc:
             if attempt == 3:
