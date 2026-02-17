@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from datetime import date
 
 MARC_NS = {"m": "http://www.loc.gov/MARC21/slim"}
+_NS_URI = "http://www.loc.gov/MARC21/slim"
 
 # ISO 639-2/B codes used by UNDL (3-letter, no delimiters in 041$a)
 _LANG_CODE_LEN = 3
@@ -18,102 +19,108 @@ def parse_record(record_xml: str) -> dict | None:
     Returns None if the record has no valid 001 (recid).
     """
     root = ET.fromstring(record_xml)
-    if root.tag == f"{{{MARC_NS['m']}}}record":
+
+    # Detect whether elements use the MARC namespace or are bare
+    if root.tag == f"{{{_NS_URI}}}record" or root.tag == "record":
         rec = root
     else:
-        rec = root.find("m:record", MARC_NS)
+        rec = root.find("m:record", MARC_NS) or root.find("record")
         if rec is None:
             rec = root
 
-    recid_str = _controlfield(rec, "001")
+    # Choose namespace prefix based on whether children are namespaced
+    first_child = rec[0] if len(rec) > 0 else None
+    ns = MARC_NS if (first_child is not None and first_child.tag.startswith("{")) else {}
+
+    recid_str = _controlfield(rec, "001", ns)
     if not recid_str or not recid_str.strip().isdigit():
         return None
 
     # 245: Title
-    title_a = _subfield_first(rec, "245", "a") or ""
-    title_b = _subfield_first(rec, "245", "b") or ""
+    title_a = _subfield_first(rec, "245", "a", ns) or ""
+    title_b = _subfield_first(rec, "245", "b", ns) or ""
     title = _clean_title(title_a, title_b)
 
     # 269: Date (ISO)
-    date_pub = _parse_date(_subfield_first(rec, "269", "a"))
+    date_pub = _parse_date(_subfield_first(rec, "269", "a", ns))
 
     # 041: Languages
-    raw_lang = _subfield_first(rec, "041", "a") or ""
+    raw_lang = _subfield_first(rec, "041", "a", ns) or ""
     languages = _parse_languages(raw_lang)
 
     # 650: Subjects
-    subjects = _subfield_all(rec, "650", "a")
+    subjects = _subfield_all(rec, "650", "a", ns)
 
     # 710: Corporate authors
     corporate_authors = []
-    for df in _datafields(rec, "710"):
-        name = _sf(df, "a")
-        atype = _sf(df, "9")
+    for df in _datafields(rec, "710", ns):
+        name = _sf(df, "a", ns)
+        atype = _sf(df, "9", ns)
         if name:
             corporate_authors.append({"name": name, "type": atype})
 
     # 856: Files
     files = []
-    for df in _datafields(rec, "856"):
-        url = _sf(df, "u")
+    for df in _datafields(rec, "856", ns):
+        url = _sf(df, "u", ns)
         if url:
             files.append({
                 "url": url,
-                "lang": _sf(df, "y"),
-                "size": _sf(df, "s"),
-                "uuid": _sf(df, "9"),
+                "lang": _sf(df, "y", ns),
+                "size": _sf(df, "s", ns),
+                "uuid": _sf(df, "9", ns),
             })
 
     # 500: Notes
-    notes = _subfield_all(rec, "500", "a")
+    notes = _subfield_all(rec, "500", "a", ns)
 
     # 991: Agenda items
     agenda_items = []
-    for df in _datafields(rec, "991"):
+    for df in _datafields(rec, "991", ns):
         entry = {
-            "doc": _sf(df, "a"),
-            "item": _sf(df, "b"),
-            "desc": _sf(df, "c"),
-            "topic": _sf(df, "d"),
+            "doc": _sf(df, "a", ns),
+            "item": _sf(df, "b", ns),
+            "desc": _sf(df, "c", ns),
+            "topic": _sf(df, "d", ns),
         }
         if any(entry.values()):
             agenda_items.append(entry)
 
     # 993: Related documents
     related_documents = []
-    for df in _datafields(rec, "993"):
-        sym = _sf(df, "a")
+    for df in _datafields(rec, "993", ns):
+        sym = _sf(df, "a", ns)
         if sym:
             rel = df.attrib.get("ind1", "").strip() or None
             related_documents.append({"symbol": sym, "relationship": rel})
 
     return {
         "recid": int(recid_str.strip()),
-        "document_symbol": _subfield_first(rec, "191", "a"),
-        "symbol_body": _subfield_first(rec, "191", "b"),
-        "symbol_session": _subfield_first(rec, "191", "c"),
-        "symbol_committee": _subfield_first(rec, "191", "d"),
+        "document_symbol": _subfield_first(rec, "191", "a", ns),
+        "symbol_body": _subfield_first(rec, "191", "b", ns),
+        "symbol_session": _subfield_first(rec, "191", "c", ns),
+        "symbol_committee": _subfield_first(rec, "191", "d", ns),
         "title": title,
-        "title_statement": _subfield_first(rec, "245", "c"),
+        "title_statement": _subfield_first(rec, "245", "c", ns),
         "date_publication": date_pub,
-        "date_text": _subfield_first(rec, "260", "c"),
-        "publisher": _subfield_first(rec, "260", "b"),
-        "pub_place": _subfield_first(rec, "260", "a"),
-        "physical_desc": _subfield_first(rec, "300", "a"),
-        "doc_class_code": _subfield_first(rec, "089", "b"),
-        "doc_class_desc": _subfield_first(rec, "089", "a"),
+        "date_text": _subfield_first(rec, "260", "c", ns),
+        "publisher": _subfield_first(rec, "260", "b", ns),
+        "pub_place": _subfield_first(rec, "260", "a", ns),
+        "physical_desc": _subfield_first(rec, "300", "a", ns),
+        "doc_class_code": _subfield_first(rec, "089", "b", ns),
+        "doc_class_desc": _subfield_first(rec, "089", "a", ns),
         "languages": languages,
         "subjects": subjects,
         "corporate_authors": corporate_authors,
-        "un_body": _subfield_first(rec, "981", "a"),
-        "un_committee": _subfield_first(rec, "981", "b"),
+        "un_body": _subfield_first(rec, "981", "a", ns),
+        "un_committee": _subfield_first(rec, "981", "b", ns),
         "notes": notes,
-        "summary": _subfield_first(rec, "520", "a"),
+        "summary": _subfield_first(rec, "520", "a", ns),
         "files": files,
-        "collections": _subfield_all(rec, "980", "a"),
-        "resource_type": _subfield_first(rec, "989", "a"),
-        "resource_subtype": _subfield_first(rec, "989", "b"),
-        "vote_summary": _subfield_first(rec, "996", "a"),
+        "collections": _subfield_all(rec, "980", "a", ns),
+        "resource_type": _subfield_first(rec, "989", "a", ns),
+        "resource_subtype": _subfield_first(rec, "989", "b", ns),
+        "vote_summary": _subfield_first(rec, "996", "a", ns),
         "agenda_items": agenda_items,
         "related_documents": related_documents,
         "marcxml": record_xml,
@@ -124,37 +131,40 @@ def parse_record(record_xml: str) -> dict | None:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _controlfield(rec: ET.Element, tag: str) -> str | None:
-    for cf in rec.findall("m:controlfield", MARC_NS):
+def _controlfield(rec: ET.Element, tag: str, ns: dict[str, str]) -> str | None:
+    prefix = "m:controlfield" if ns else "controlfield"
+    for cf in rec.findall(prefix, ns):
         if cf.attrib.get("tag") == tag:
             return (cf.text or "").strip() or None
     return None
 
 
-def _datafields(rec: ET.Element, tag: str) -> list[ET.Element]:
-    return [df for df in rec.findall("m:datafield", MARC_NS) if df.attrib.get("tag") == tag]
+def _datafields(rec: ET.Element, tag: str, ns: dict[str, str]) -> list[ET.Element]:
+    prefix = "m:datafield" if ns else "datafield"
+    return [df for df in rec.findall(prefix, ns) if df.attrib.get("tag") == tag]
 
 
-def _sf(df: ET.Element, code: str) -> str | None:
-    for sf in df.findall("m:subfield", MARC_NS):
+def _sf(df: ET.Element, code: str, ns: dict[str, str]) -> str | None:
+    prefix = "m:subfield" if ns else "subfield"
+    for sf in df.findall(prefix, ns):
         if sf.attrib.get("code") == code:
             val = (sf.text or "").strip()
             return val if val else None
     return None
 
 
-def _subfield_first(rec: ET.Element, tag: str, code: str) -> str | None:
-    for df in _datafields(rec, tag):
-        val = _sf(df, code)
+def _subfield_first(rec: ET.Element, tag: str, code: str, ns: dict[str, str]) -> str | None:
+    for df in _datafields(rec, tag, ns):
+        val = _sf(df, code, ns)
         if val:
             return val
     return None
 
 
-def _subfield_all(rec: ET.Element, tag: str, code: str) -> list[str]:
+def _subfield_all(rec: ET.Element, tag: str, code: str, ns: dict[str, str]) -> list[str]:
     result: list[str] = []
-    for df in _datafields(rec, tag):
-        val = _sf(df, code)
+    for df in _datafields(rec, tag, ns):
+        val = _sf(df, code, ns)
         if val:
             result.append(val)
     return result

@@ -152,6 +152,12 @@ def fetch_marcxml(start: int, end: int, session: requests.Session) -> str:
         try:
             resp = session.get(url, timeout=120)
             resp.raise_for_status()
+            if resp.status_code != 200:
+                raise requests.RequestException(
+                    f"Unexpected status {resp.status_code} (expected 200)"
+                )
+            if not resp.text.strip():
+                raise requests.RequestException("Empty response body")
             return resp.text
         except (requests.RequestException, OSError) as exc:
             if attempt == 3:
@@ -188,10 +194,22 @@ def fetch_and_parse(start: int, end: int, session: requests.Session) -> list[dic
         return left + right
 
     parsed = []
+    parse_failures = 0
     for xml_str in record_xmls:
         rec = parse_record(xml_str)
         if rec:
             parsed.append(rec)
+        else:
+            parse_failures += 1
+
+    if record_xmls and not parsed:
+        raise RuntimeError(
+            f"All {len(record_xmls)} XML records in range {start}→{end} failed to parse. "
+            f"Parser may be broken."
+        )
+    if parse_failures > 0:
+        console.print(f"  [yellow]Warning: {parse_failures}/{len(record_xmls)} records failed to parse in {start}→{end}[/yellow]")
+
     return parsed
 
 
@@ -212,13 +230,14 @@ def prepare_row(rec: dict) -> dict:
 
 
 def upsert_batch(conn: psycopg.Connection, records: list[dict]) -> int:
-    """Upsert a batch of records. Returns count written."""
+    """Upsert a batch of records using pipeline mode to minimize round-trips."""
     if not records:
         return 0
-    with conn.cursor() as cur:
-        for rec in records:
-            row = prepare_row(rec)
-            cur.execute(UPSERT_SQL, row)
+    rows = [prepare_row(rec) for rec in records]
+    with conn.pipeline():
+        with conn.cursor() as cur:
+            for row in rows:
+                cur.execute(UPSERT_SQL, row)
     conn.commit()
     return len(records)
 
@@ -233,7 +252,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Fetch and parse only, no DB writes")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help="Records per DB commit")
     parser.add_argument("--max-records", type=int, default=0, help="Stop after N records (0 = unlimited)")
-    parser.add_argument("--chunk-size", type=int, default=200, help="Recid range per HTTP request")
+    parser.add_argument("--chunk-size", type=int, default=100, help="Recid range per HTTP request (keep below MAX_PER_REQUEST to avoid subdivision)")
+    parser.add_argument("--force", action="store_true", help="Force fresh start, ignore existing checkpoint")
     return parser.parse_args()
 
 
@@ -247,7 +267,22 @@ def main() -> int:
             console.print("[red]DATABASE_URL is required[/red]", highlight=False)
             return 2
 
-    state = load_state() if args.resume else {}
+    if args.resume:
+        state = load_state()
+        if not state:
+            console.print("[yellow]No checkpoint found — starting from scratch[/yellow]")
+    else:
+        existing = load_state()
+        if existing and existing.get("total_upserted", 0) > 0 and not existing.get("finished_at") and not args.force:
+            console.print(
+                f"[bold red]WARNING:[/bold red] Existing checkpoint has {existing['total_upserted']} records upserted "
+                f"(last recid {existing.get('last_completed_end', '?')}). "
+                f"Did you mean [bold]--resume[/bold]?"
+            )
+            console.print("Run with [bold]--resume[/bold] to continue, or [bold]--force[/bold] to start fresh.")
+            return 1
+        state = {}
+
     resume_block = state.get("block_index", 0)
     resume_start = state.get("last_completed_end", ID_BLOCKS[resume_block][0] - 1) + 1 if args.resume else None
 
@@ -262,7 +297,7 @@ def main() -> int:
     total_ids = sum(end - start for start, end in ID_BLOCKS)
 
     session = requests.Session()
-    session.headers["User-Agent"] = "Mozilla/5.0 (compatible; UNDL-sync/1.0)"
+    # Use default python-requests UA — custom UAs trigger AWS WAF JS challenges
 
     conn = None
     if not args.dry_run:
@@ -308,6 +343,12 @@ def main() -> int:
 
                     try:
                         records = fetch_and_parse(chunk_start, chunk_end, session)
+                    except RuntimeError as exc:
+                        # Parse failures are fatal — don't silently skip
+                        progress.stop()
+                        console.print(f"\n[bold red]FATAL:[/bold red] {exc}")
+                        save_state(state)
+                        return 1
                     except Exception as exc:
                         console.print(f"  [red]Failed range {chunk_start}→{chunk_end}: {exc}[/red]")
                         skipped_ranges.append([chunk_start, chunk_end])
@@ -325,18 +366,16 @@ def main() -> int:
                             written = upsert_batch(conn, batch)
                             total_upserted += written
                         except Exception as exc:
-                            console.print(f"  [red]DB error: {exc}[/red]")
                             conn.rollback()
-                            # Retry once
-                            try:
-                                written = upsert_batch(conn, batch)
-                                total_upserted += written
-                            except Exception:
-                                console.print(f"  [red]DB retry failed, skipping batch[/red]")
-                                conn.rollback()
+                            progress.stop()
+                            console.print(f"\n[bold red]DB ERROR — aborting:[/bold red] {exc}")
+                            console.print("[yellow]Fix the issue and re-run with --resume.[/yellow]")
+                            save_state(state)
+                            return 1
                         batch = []
 
-                        # Save checkpoint
+                        # Only checkpoint after successful DB commit
+                        # so resume re-fetches any uncommitted records
                         state.update({
                             "block_index": block_index,
                             "last_completed_end": chunk_end,
@@ -359,8 +398,10 @@ def main() -> int:
                     written = upsert_batch(conn, batch)
                     total_upserted += written
                 except Exception as exc:
-                    console.print(f"  [red]Final batch DB error: {exc}[/red]")
                     conn.rollback()
+                    console.print(f"\n[bold red]DB ERROR on final batch — aborting:[/bold red] {exc}")
+                    save_state(state)
+                    return 1
 
     finally:
         if conn:
