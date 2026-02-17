@@ -1,39 +1,81 @@
-"""Rate limiting via slowapi with tier-aware limits."""
+"""PostgreSQL-backed rate limiting for serverless environments."""
 
 from __future__ import annotations
 
-from fastapi import Request
-from slowapi import Limiter
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
-# Anonymous: 10/min, 100/day
-ANON_LIMIT = "10/minute;100/day"
-# Free tier: 60/min, 10000/day
-FREE_LIMIT = "60/minute;10000/day"
-# Research: 300/min, 100000/day
-RESEARCH_LIMIT = "300/minute;100000/day"
-# Institutional: 1000/min
-INSTITUTIONAL_LIMIT = "1000/minute"
+from psycopg import AsyncConnection
 
 
-def _key_func(request: Request) -> str:
-    """Extract rate-limit key: API key prefix or client IP."""
-    key_info = getattr(request.state, "api_key", None)
-    if key_info:
-        return f"key:{key_info['key_prefix']}"
-    # Anonymous — use IP
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return f"ip:{forwarded.split(',')[0].strip()}"
-    return f"ip:{request.client.host if request.client else 'unknown'}"
+# Tier limits: requests per minute
+TIER_LIMITS: dict[str, int] = {
+    "anonymous": 10,
+    "free": 60,
+    "research": 300,
+    "institutional": 1000,
+}
 
 
-def _dynamic_limit(key: str) -> str:
-    """Return the rate limit string based on the key type."""
-    # This is called by slowapi with the key returned by _key_func
-    # We can't easily access request.state here, so we use a simpler approach:
-    # the middleware sets the limit based on the key's tier
-    # For now, use a default; the actual enforcement happens via the decorator
-    return FREE_LIMIT
+@dataclass
+class RateLimitResult:
+    allowed: bool
+    limit: int
+    remaining: int
+    reset: datetime
 
 
-limiter = Limiter(key_func=_key_func)
+async def check_rate_limit(
+    conn: AsyncConnection,
+    key: str,
+    tier: str,
+) -> RateLimitResult:
+    """Check and increment rate limit for a key using a per-minute window.
+
+    Uses INSERT ... ON CONFLICT for atomic upsert. Each (key, minute) pair
+    gets a counter that increments on every request.
+    """
+    limit = TIER_LIMITS.get(tier, TIER_LIMITS["anonymous"])
+
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            INSERT INTO digitallibrary.rate_limit_windows (key, window_start, count)
+            VALUES (
+                %(key)s,
+                date_trunc('minute', now()),
+                1
+            )
+            ON CONFLICT (key, window_start)
+            DO UPDATE SET count = digitallibrary.rate_limit_windows.count + 1
+            RETURNING count, window_start
+            """,
+            {"key": key},
+        )
+        row = await cur.fetchone()
+        await conn.commit()
+
+    count = row[0]
+    window_start: datetime = row[1]
+    reset = window_start.replace(second=0, microsecond=0, tzinfo=timezone.utc)
+    reset = reset + timedelta(minutes=1)
+
+    return RateLimitResult(
+        allowed=count <= limit,
+        limit=limit,
+        remaining=max(0, limit - count),
+        reset=reset,
+    )
+
+
+async def cleanup_old_windows(conn: AsyncConnection) -> int:
+    """Delete rate limit windows older than 1 hour. Returns rows deleted."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            DELETE FROM digitallibrary.rate_limit_windows
+            WHERE window_start < now() - interval '1 hour'
+            """
+        )
+        await conn.commit()
+        return cur.rowcount

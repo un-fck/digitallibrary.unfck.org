@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request, Security
+from fastapi import Depends, HTTPException, Request, Response, Security
 from fastapi.security import APIKeyHeader, APIKeyQuery
 from psycopg import AsyncConnection
 
 from api import database
+from api.services.rate_limit import check_rate_limit
 
 # ---------------------------------------------------------------------------
 # Database connection
@@ -102,3 +104,51 @@ async def require_api_key(
 
 OptionalKey = Annotated[dict | None, Depends(optional_api_key)]
 RequiredKey = Annotated[dict, Depends(require_api_key)]
+
+# ---------------------------------------------------------------------------
+# Rate limiting (PostgreSQL-backed)
+# ---------------------------------------------------------------------------
+
+async def check_rate(
+    request: Request,
+    response: Response,
+    key_info: dict | None = Depends(optional_api_key),
+) -> None:
+    """Enforce per-minute rate limits using PostgreSQL.
+
+    Resolves the rate-limit key (API key prefix or client IP) and tier,
+    checks the current window count, and raises 429 if exceeded.
+    Sets standard rate-limit headers on every response.
+    """
+    if key_info:
+        rl_key = f"key:{key_info['key_prefix']}"
+        tier = key_info.get("tier", "free")
+    else:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            rl_key = f"ip:{forwarded.split(',')[0].strip()}"
+        else:
+            rl_key = f"ip:{request.client.host if request.client else 'unknown'}"
+        tier = "anonymous"
+
+    async with database.pool.connection() as conn:
+        result = await check_rate_limit(conn, rl_key, tier)
+
+    response.headers["X-RateLimit-Limit"] = str(result.limit)
+    response.headers["X-RateLimit-Remaining"] = str(result.remaining)
+    response.headers["X-RateLimit-Reset"] = str(int(result.reset.timestamp()))
+
+    if not result.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Try again later.",
+            headers={
+                "X-RateLimit-Limit": str(result.limit),
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": str(int(result.reset.timestamp())),
+                "Retry-After": str(max(1, int(result.reset.timestamp() - time.time()))),
+            },
+        )
+
+
+RateLimit = Annotated[None, Depends(check_rate)]

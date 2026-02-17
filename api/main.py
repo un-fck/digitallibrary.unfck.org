@@ -4,15 +4,12 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
 
 from api.database import close_pool, init_pool
+from api.deps import check_rate
 from api.routers import api_keys, documents, facets, search, stats
-from api.services.rate_limit import limiter
 
 DESCRIPTION = """\
 Public API for the UN Digital Library — providing access to 767K+ United Nations
@@ -55,10 +52,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Rate limiting
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
 # CORS — public API
 app.add_middleware(
     CORSMiddleware,
@@ -67,12 +60,13 @@ app.add_middleware(
     allow_headers=["Authorization"],
 )
 
-# Mount routers
-app.include_router(documents.router, prefix="/v1")
-app.include_router(search.router, prefix="/v1")
-app.include_router(stats.router, prefix="/v1")
-app.include_router(facets.router, prefix="/v1")
-app.include_router(api_keys.router, prefix="/v1/keys")
+# Mount routers — all /v1 routes are rate-limited via PostgreSQL
+_rate_deps = [Depends(check_rate)]
+app.include_router(documents.router, prefix="/v1", dependencies=_rate_deps)
+app.include_router(search.router, prefix="/v1", dependencies=_rate_deps)
+app.include_router(stats.router, prefix="/v1", dependencies=_rate_deps)
+app.include_router(facets.router, prefix="/v1", dependencies=_rate_deps)
+app.include_router(api_keys.router, prefix="/v1/keys", dependencies=_rate_deps)
 
 
 @app.get("/v1/", tags=["meta"])
