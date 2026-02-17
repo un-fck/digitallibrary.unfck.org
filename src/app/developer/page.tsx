@@ -1,4 +1,3 @@
-import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/features/auth/service";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
@@ -8,7 +7,6 @@ export const dynamic = "force-dynamic";
 
 export default async function DeveloperPage() {
   const user = await getCurrentUser();
-  if (!user) redirect("/login");
 
   return (
     <div className="flex min-h-screen flex-col bg-gray-50">

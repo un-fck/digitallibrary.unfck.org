@@ -5,6 +5,7 @@ import {
   Search,
   RefreshCw,
   BookOpen,
+  Code2,
 } from "lucide-react";
 import { getCurrentUser } from "@/features/auth/service";
 import { Header } from "@/components/Header";
@@ -50,7 +51,7 @@ export default async function AboutPage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-gray-50">
-      <Header user={user} maxWidth="5xl" hideAbout />
+      <Header user={user} maxWidth="5xl" activePage="about" />
       <main className="flex-1">
         {/* Hero */}
         <section className="bg-white border-b border-gray-200">
@@ -117,6 +118,54 @@ export default async function AboutPage() {
               title="Nightly Updates"
               description="An automated pipeline syncs new and modified records from the UN Digital Library every night."
             />
+          </div>
+        </section>
+
+        {/* API */}
+        <section className="mx-auto max-w-5xl px-4 pb-12 sm:px-6">
+          <h3 className="mb-6 text-center text-xs font-semibold tracking-widest text-gray-400 uppercase">
+            REST API
+          </h3>
+          <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+            <div className="mb-4 flex items-center gap-2">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-un-blue/10">
+                <Code2 className="h-5 w-5 text-un-blue" />
+              </div>
+              <div>
+                <h4 className="text-sm font-semibold text-gray-900">
+                  Programmatic Access
+                </h4>
+                <p className="text-sm text-gray-500">
+                  Search, filter, and retrieve documents via a public JSON API
+                </p>
+              </div>
+            </div>
+            <div className="mb-4 rounded-lg bg-gray-50 p-4">
+              <code className="block font-mono text-xs text-gray-700">
+                curl https://digitallibrary.unfck.org/v1/search?q=climate+change
+              </code>
+            </div>
+            <p className="mb-4 text-sm text-gray-500">
+              Anonymous access is available at 10 req/min. Sign up for a free
+              API key for higher limits — open to anyone.
+            </p>
+            <div className="flex gap-3">
+              <Link
+                href="/developer"
+                className="inline-flex items-center gap-1 rounded-lg bg-un-blue px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-un-blue/90"
+              >
+                Get API Key
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+              <a
+                href="/v1/docs"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                API Docs
+              </a>
+            </div>
           </div>
         </section>
 

@@ -10,7 +10,7 @@ export default async function Home() {
 
   return (
     <div className="flex min-h-screen flex-col bg-gray-50">
-      <Header user={user} entities={[]} maxWidth="5xl" hideAbout />
+      <Header user={user} entities={[]} maxWidth="5xl" />
       <main className="flex-1 px-4 py-10 sm:px-6">
         <div className="mx-auto max-w-5xl">
           <DocumentExplorer />

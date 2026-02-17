@@ -29,7 +29,7 @@ export function LoginForm() {
         <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
           <h2 className="mb-1 text-2xl font-bold text-gray-900">Sign In</h2>
           <p className="mb-8 text-sm text-gray-500">
-            Enter your UN entity email address to receive a sign-in link.
+            Enter your email address to receive a sign-in link.
           </p>
           {status === "sent" ? (
             <div className="min-h-[105px] rounded-lg border border-green-200 bg-green-50 p-4">
@@ -56,7 +56,7 @@ export function LoginForm() {
                   name="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="your.name@un.org"
+                  placeholder="you@example.com"
                   required
                   autoComplete="email"
                   className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm transition-all placeholder:text-gray-400 focus:border-un-blue focus:ring-2 focus:ring-un-blue/20 focus:outline-none"

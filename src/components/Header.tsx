@@ -8,18 +8,18 @@ interface Props {
   children?: React.ReactNode;
   entities?: EntityOption[];
   maxWidth?: "5xl" | "6xl" | "7xl";
-  hideAbout?: boolean;
+  activePage?: "home" | "about" | "developer";
 }
 
 export const SITE_TITLE = "UN Digital Library";
-export const SITE_SUBTITLE = "Open access to 767K+ documents";
+export const SITE_SUBTITLE = "Open access to UN documents";
 
 export function Header({
   user,
   children,
   entities = [],
   maxWidth = "7xl",
-  hideAbout = false,
+  activePage,
 }: Props) {
   const isLoggedIn = !!user;
   const widthClass =
@@ -55,7 +55,14 @@ export function Header({
           </div>
         </Link>
         <nav className="flex items-center gap-3">
-          {!hideAbout && (
+          {activePage === "about" ? (
+            <Link
+              href="/"
+              className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+            >
+              Documents
+            </Link>
+          ) : (
             <Link
               href="/about"
               className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
@@ -63,14 +70,12 @@ export function Header({
               About
             </Link>
           )}
-          {isLoggedIn && (
-            <Link
-              href="/developer"
-              className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
-            >
-              API
-            </Link>
-          )}
+          <Link
+            href="/developer"
+            className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+          >
+            API
+          </Link>
           {isLoggedIn ? (
             <UserMenu
               email={user.email}

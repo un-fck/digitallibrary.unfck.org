@@ -8,7 +8,9 @@ import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import {
   Calendar,
   Building2,
+  ExternalLink,
   FileDown,
+  FileText,
   Globe,
   Hash,
   Loader2,
@@ -143,6 +145,15 @@ function Field({
       <dd className="mt-0.5 text-sm text-gray-800">{children}</dd>
     </div>
   );
+}
+
+function getDocumentUrls(symbol: string) {
+  const encoded = encodeURIComponent(symbol);
+  return {
+    docsPage: `https://docs.un.org/en/${encoded}`,
+    pdfDownload: `https://documents.un.org/api/symbol/access?s=${encoded}&l=en&t=pdf`,
+    docxDownload: `https://documents.un.org/api/symbol/access?s=${encoded}&l=en&t=doc`,
+  };
 }
 
 function formatSize(bytes: string | null): string {
@@ -289,6 +300,51 @@ export function DocumentExplorer() {
                 </span>
               )}
             </div>
+
+            {/* ODS action buttons */}
+            {doc.document_symbol && (() => {
+              const urls = getDocumentUrls(doc.document_symbol);
+              return (
+                <div className="mt-3 flex flex-wrap gap-2 border-t border-gray-100 pt-3">
+                  <a
+                    href={urls.docsPage}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-un-blue px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-un-blue/90"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Open on docs.un.org
+                  </a>
+                  <a
+                    href={urls.pdfDownload}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                  >
+                    <FileDown className="h-3.5 w-3.5" />
+                    Download PDF
+                  </a>
+                  <a
+                    href={urls.docxDownload}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    Download DOCX
+                  </a>
+                  <a
+                    href={`https://digitallibrary.un.org/record/${doc.recid}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Digital Library
+                  </a>
+                </div>
+              );
+            })()}
           </div>
 
           {/* View mode tabs */}

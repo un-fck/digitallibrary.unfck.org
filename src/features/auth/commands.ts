@@ -10,7 +10,6 @@ import {
   createMagicToken,
   createSession,
   getCurrentUser,
-  isAllowedDomain,
   recentTokenExists,
   upsertUser,
   verifyMagicToken as verifyMagicTokenService,
@@ -25,9 +24,6 @@ export async function requestMagicLink(email: string): Promise<ActionResult> {
     return { success: false, error: "Email required" };
   }
   const trimmedEmail = email.trim();
-  if (!(await isAllowedDomain(trimmedEmail))) {
-    return { success: false, error: "Email domain not allowed" };
-  }
   if (await recentTokenExists(trimmedEmail)) {
     return {
       success: false,
