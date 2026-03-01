@@ -183,18 +183,9 @@ def extract_records(response_text: str) -> list[str]:
 
 
 def fetch_and_parse(start: int, end: int, session: requests.Session) -> list[dict]:
-    """Fetch a recid range and parse records. Subdivides if possibly truncated."""
+    """Fetch a recid range and parse records."""
     raw = fetch_marcxml(start, end, session)
     record_xmls = extract_records(raw)
-
-    if len(record_xmls) >= MAX_PER_REQUEST and (end - start) > 1:
-        # Possibly truncated — subdivide
-        mid = (start + end) // 2
-        time.sleep(CRAWL_DELAY)
-        left = fetch_and_parse(start, mid, session)
-        time.sleep(CRAWL_DELAY)
-        right = fetch_and_parse(mid + 1, end, session)
-        return left + right
 
     parsed = []
     parse_failures = 0
@@ -255,7 +246,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Fetch and parse only, no DB writes")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help="Records per DB commit")
     parser.add_argument("--max-records", type=int, default=0, help="Stop after N records (0 = unlimited)")
-    parser.add_argument("--chunk-size", type=int, default=100, help="Recid range per HTTP request (keep below MAX_PER_REQUEST to avoid subdivision)")
+    parser.add_argument("--chunk-size", type=int, default=200, help="Recid range per HTTP request")
     parser.add_argument("--force", action="store_true", help="Force fresh start, ignore existing checkpoint")
     return parser.parse_args()
 
