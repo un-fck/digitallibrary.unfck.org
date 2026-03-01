@@ -8,11 +8,34 @@ interface Props {
   children?: React.ReactNode;
   entities?: EntityOption[];
   maxWidth?: "5xl" | "6xl" | "7xl";
-  activePage?: "home" | "about" | "developer";
+  activePage?: "home" | "docs" | "developer";
 }
 
 export const SITE_TITLE = "UN Digital Library";
 export const SITE_SUBTITLE = "Open access to UN documents";
+
+function NavLink({
+  href,
+  active,
+  children,
+}: {
+  href: string;
+  active: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+        active
+          ? "bg-gray-100 text-gray-900"
+          : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+      }`}
+    >
+      {children}
+    </Link>
+  );
+}
 
 export function Header({
   user,
@@ -54,42 +77,34 @@ export function Header({
             <p className="text-xs text-gray-400">{SITE_SUBTITLE}</p>
           </div>
         </Link>
-        <nav className="flex items-center gap-3">
-          {activePage === "about" ? (
-            <Link
-              href="/"
-              className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
-            >
-              Documents
-            </Link>
-          ) : (
-            <Link
-              href="/about"
-              className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
-            >
-              About
-            </Link>
+        <nav className="flex items-center gap-1">
+          <NavLink href="/" active={activePage === "home"}>
+            Documents
+          </NavLink>
+          <NavLink href="/docs" active={activePage === "docs"}>
+            API Docs
+          </NavLink>
+          {isLoggedIn && (
+            <NavLink href="/developer" active={activePage === "developer"}>
+              Developer
+            </NavLink>
           )}
-          <Link
-            href="/developer"
-            className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
-          >
-            API
-          </Link>
-          {isLoggedIn ? (
-            <UserMenu
-              email={user.email}
-              entity={user.entity}
-              entities={entities}
-            />
-          ) : (
-            <Link
-              href="/login"
-              className="rounded-lg bg-un-blue px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-un-blue/90"
-            >
-              Sign In
-            </Link>
-          )}
+          <div className="ml-2">
+            {isLoggedIn ? (
+              <UserMenu
+                email={user.email}
+                entity={user.entity}
+                entities={entities}
+              />
+            ) : (
+              <Link
+                href="/login"
+                className="rounded-lg bg-un-blue px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-un-blue/90"
+              >
+                Sign In
+              </Link>
+            )}
+          </div>
           {children}
         </nav>
       </div>

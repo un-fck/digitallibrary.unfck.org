@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const PUBLIC_PATHS = [
-  "/about",
+  "/v1",
+  "/docs",
   "/login",
   "/verify",
   "/api/auth",

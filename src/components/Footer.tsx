@@ -17,10 +17,10 @@ export function Footer() {
         </p>
         <div className="flex items-center gap-4 text-xs text-gray-400">
           <Link
-            href="/about"
+            href="/docs"
             className="transition-colors hover:text-gray-600"
           >
-            About
+            API Docs
           </Link>
           <a
             href="https://github.com/unfck-org/digitallibrary"

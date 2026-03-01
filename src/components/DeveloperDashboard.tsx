@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import {
   Key,
   Copy,
@@ -8,7 +9,6 @@ import {
   RefreshCw,
   BarChart3,
   Zap,
-  Code2,
   ExternalLink,
   Loader2,
 } from "lucide-react";
@@ -265,41 +265,16 @@ export function DeveloperDashboard() {
           </div>
         </SectionCard>
 
-        {/* Quick Start */}
-        <SectionCard icon={Code2} title="Quick Start">
-          <div className="space-y-3">
-            <div>
-              <p className="mb-1 text-xs font-medium text-gray-500">curl</p>
-              <div className="flex items-start justify-between gap-2 rounded-lg bg-gray-50 p-3">
-                <code className="break-all font-mono text-xs text-gray-700">
-                  curl -H &quot;Authorization: Bearer {keyData?.key_prefix}...&quot; \<br />
-                  &nbsp;&nbsp;http://localhost:8000/v1/documents?q=A/RES
-                </code>
-              </div>
-            </div>
-            <div>
-              <p className="mb-1 text-xs font-medium text-gray-500">Python</p>
-              <div className="rounded-lg bg-gray-50 p-3">
-                <code className="block font-mono text-xs text-gray-700">
-                  <span className="text-purple-600">import</span> httpx<br />
-                  r = httpx.get(<span className="text-green-700">&quot;http://localhost:8000/v1/search&quot;</span>,<br />
-                  &nbsp;&nbsp;params={'{'}&quot;q&quot;: &quot;climate change&quot;{'}'},<br />
-                  &nbsp;&nbsp;headers={'{'}&quot;Authorization&quot;: f&quot;Bearer {'{'}<span className="text-blue-600">KEY</span>{'}'}&quot;{'}'})<br />
-                  docs = r.json()[<span className="text-green-700">&quot;results&quot;</span>]
-                </code>
-              </div>
-            </div>
-            <a
-              href="/v1/docs"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-sm font-medium text-un-blue hover:underline"
-            >
-              API Documentation
-              <ExternalLink className="h-3 w-3" />
-            </a>
-          </div>
-        </SectionCard>
+      </div>
+
+      <div className="pt-2">
+        <Link
+          href="/docs"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-un-blue hover:underline"
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+          API Documentation
+        </Link>
       </div>
     </div>
   );
