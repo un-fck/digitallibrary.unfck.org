@@ -125,10 +125,7 @@ export async function getCurrentUser() {
   const rows = await query<{
     id: string;
     email: string;
-    entity: string | null;
-  }>(`SELECT id, email, entity FROM ${tables.users} WHERE id = $1`, [
-    session.userId,
-  ]);
+  }>(`SELECT id, email FROM ${tables.users} WHERE id = $1`, [session.userId]);
   if (!rows[0]) return null;
-  return { id: rows[0].id, email: rows[0].email, entity: rows[0].entity };
+  return { id: rows[0].id, email: rows[0].email };
 }

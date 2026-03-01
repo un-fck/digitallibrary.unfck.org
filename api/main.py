@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.database import close_pool, init_pool
 from api.deps import check_rate
-from api.routers import api_keys, documents, facets, search, stats
+from api.routers import api_keys, documents, facets, marcxml, search, stats
 
 DESCRIPTION = """\
 Public API for the UN Digital Library — providing access to 767K+ United Nations
@@ -37,7 +37,11 @@ Include your API key in requests using one of:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_pool()
+    try:
+        await init_pool()
+    except Exception as e:
+        import warnings
+        warnings.warn(f"Database pool failed to initialize: {e}. API will start but DB-dependent endpoints will fail.")
     yield
     await close_pool()
 
@@ -62,6 +66,7 @@ app.add_middleware(
 
 # Mount routers — all /v1 routes are rate-limited via PostgreSQL
 _rate_deps = [Depends(check_rate)]
+app.include_router(marcxml.router, prefix="/v1", dependencies=_rate_deps)
 app.include_router(documents.router, prefix="/v1", dependencies=_rate_deps)
 app.include_router(search.router, prefix="/v1", dependencies=_rate_deps)
 app.include_router(stats.router, prefix="/v1", dependencies=_rate_deps)
@@ -78,6 +83,7 @@ async def api_root():
         "docs": "/v1/docs",
         "endpoints": {
             "documents": "/v1/documents",
+            "marcxml": "/v1/marcxml",
             "search": "/v1/search",
             "facets": "/v1/facets",
             "stats": "/v1/stats",

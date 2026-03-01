@@ -3,6 +3,7 @@ import { ArrowRight, Code2, Key, Zap, Lock, ExternalLink } from "lucide-react";
 import { getCurrentUser } from "@/features/auth/service";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
+import { CodeBlock } from "@/components/CodeBlock";
 
 export const dynamic = "force-dynamic";
 
@@ -37,8 +38,17 @@ export default async function DocsPage() {
               REST API
             </h1>
             <p className="mx-auto max-w-2xl text-base leading-relaxed text-gray-500">
-              Programmatic access to 767,000+ UN documents. Anonymous access
-              available at 10 req/min — sign in for a free key with higher limits.
+              Programmatic access to a nightly-synced mirror of the{" "}
+              <a
+                href="https://digitallibrary.un.org"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-2 hover:text-gray-700"
+              >
+                UN Digital Library
+              </a>
+              .<br />
+              Anonymous access available at 10 req/min — sign in for a free key with higher limits.
             </p>
             <div className="mt-6">
               <a
@@ -67,11 +77,10 @@ export default async function DocsPage() {
                 <p className="text-sm text-gray-500 mb-3">
                   Make requests without credentials. Lower rate limits apply.
                 </p>
-                <pre className="rounded-lg bg-gray-50 p-3 overflow-x-auto">
-                  <code className="font-mono text-xs text-gray-600 whitespace-pre-wrap break-all">
-                    {`curl "https://digitallibrary.unfck.org/v1/search?q=A/RES"`}
-                  </code>
-                </pre>
+                <CodeBlock
+                  code={`curl "https://digitallibrary.unfck.org/v1/search?q=A/RES"`}
+                  codeClassName="whitespace-pre-wrap break-all"
+                />
               </div>
               <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                 <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-un-blue/10">
@@ -81,11 +90,10 @@ export default async function DocsPage() {
                 <p className="text-sm text-gray-500 mb-3">
                   Pass your key via <code className="font-mono text-xs bg-gray-100 px-1 rounded">Authorization</code> header or <code className="font-mono text-xs bg-gray-100 px-1 rounded">?api_key=</code> param.
                 </p>
-                <pre className="rounded-lg bg-gray-50 p-3 overflow-x-auto">
-                  <code className="font-mono text-xs text-gray-600 whitespace-pre-wrap break-all">
-                    {`curl -H "Authorization: Bearer undl_live_..." \\\n  "https://digitallibrary.unfck.org/v1/search?q=A/RES"`}
-                  </code>
-                </pre>
+                <CodeBlock
+                  code={`curl -H "Authorization: Bearer undl_live_..." \\\n  "https://digitallibrary.unfck.org/v1/search?q=A/RES"`}
+                  codeClassName="whitespace-pre-wrap break-all"
+                />
               </div>
             </div>
           </section>
@@ -120,7 +128,7 @@ export default async function DocsPage() {
                     <td className="px-5 py-3 font-medium text-gray-700">Research</td>
                     <td className="px-5 py-3 text-gray-500">300 req/min</td>
                     <td className="px-5 py-3 text-gray-500">100,000</td>
-                    <td className="px-5 py-3 text-gray-500">Research institutions</td>
+                    <td className="px-5 py-3 text-gray-500">Approved researchers</td>
                   </tr>
                   <tr>
                     <td className="px-5 py-3 font-medium text-gray-700">Institutional</td>
@@ -139,8 +147,8 @@ export default async function DocsPage() {
             <div className="grid gap-4 md:grid-cols-3">
               <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                 <p className="mb-3 text-xs font-semibold text-gray-500">curl</p>
-                <pre className="rounded-lg bg-gray-50 p-3 overflow-x-auto">
-                  <code className="font-mono text-xs text-gray-700 whitespace-pre">{`# Search
+                <CodeBlock
+                  code={`# Search
 curl "https://digitallibrary.unfck.org\\
   /v1/search?q=climate"
 
@@ -148,14 +156,15 @@ curl "https://digitallibrary.unfck.org\\
 curl \\
   -H "Authorization: Bearer KEY" \\
   "https://digitallibrary.unfck.org\\
-  /v1/search?q=climate"`}</code>
-                </pre>
+  /v1/search?q=climate"`}
+                  codeClassName="whitespace-pre"
+                />
               </div>
 
               <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                 <p className="mb-3 text-xs font-semibold text-gray-500">Python</p>
-                <pre className="rounded-lg bg-gray-50 p-3 overflow-x-auto">
-                  <code className="font-mono text-xs text-gray-700 whitespace-pre">{`import httpx
+                <CodeBlock
+                  code={`import httpx
 
 BASE = "https://digitallibrary.unfck.org"
 
@@ -166,14 +175,15 @@ r = httpx.get(
     "Authorization": "Bearer KEY"
   },
 )
-docs = r.json()["results"]`}</code>
-                </pre>
+docs = r.json()["results"]`}
+                  codeClassName="whitespace-pre"
+                />
               </div>
 
               <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                 <p className="mb-3 text-xs font-semibold text-gray-500">JavaScript</p>
-                <pre className="rounded-lg bg-gray-50 p-3 overflow-x-auto">
-                  <code className="font-mono text-xs text-gray-700 whitespace-pre">{`const BASE =
+                <CodeBlock
+                  code={`const BASE =
   "https://digitallibrary.unfck.org";
 
 const res = await fetch(
@@ -184,8 +194,9 @@ const res = await fetch(
     },
   }
 );
-const { results } = await res.json();`}</code>
-                </pre>
+const { results } = await res.json();`}
+                  codeClassName="whitespace-pre"
+                />
               </div>
             </div>
           </section>

@@ -1,10 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { DocumentSearch, type SearchResult } from "@/components/DocumentSearch";
-import { JsonView, allExpanded, defaultStyles } from "react-json-view-lite";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import {
   Calendar,
   Building2,
@@ -21,6 +18,8 @@ import {
   Link as LinkIcon,
   ClipboardList,
   Vote,
+  Braces,
+  Code2,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -80,7 +79,6 @@ interface DocumentDetail {
   vote_summary: string | null;
   agenda_items: AgendaItem[];
   related_documents: RelatedDoc[];
-  marcxml: string;
   harvested_at: string;
 }
 
@@ -96,8 +94,7 @@ function Chip({
   variant?: "default" | "blue" | "muted";
 }) {
   const styles = {
-    default:
-      "bg-gray-100 text-gray-700 border-gray-200",
+    default: "bg-gray-100 text-gray-700 border-gray-200",
     blue: "bg-un-blue/8 text-un-blue border-un-blue/15",
     muted: "bg-gray-50 text-gray-500 border-gray-200",
   };
@@ -164,6 +161,32 @@ function formatSize(bytes: string | null): string {
   return `${n} B`;
 }
 
+const UN_LANGUAGES = [
+  { code: "ar", label: "Arabic",  native: "العربية" },
+  { code: "zh", label: "Chinese", native: "中文"    },
+  { code: "en", label: "English", native: "English"  },
+  { code: "fr", label: "French",  native: "Français" },
+  { code: "ru", label: "Russian", native: "Русский"  },
+  { code: "es", label: "Spanish", native: "Español"  },
+] as const;
+
+function getAvailableCodes(languages: string[]): Set<string> {
+  const map: Record<string, string> = {
+    arabic: "ar",  العربية: "ar",
+    chinese: "zh", 中文: "zh",
+    english: "en",
+    french: "fr",  français: "fr", francais: "fr",
+    russian: "ru", русский: "ru",
+    spanish: "es", español: "es", espanol: "es",
+  };
+  const set = new Set<string>();
+  for (const lang of languages) {
+    const code = map[lang.toLowerCase()] ?? (lang.length === 2 ? lang.toLowerCase() : null);
+    if (code) set.add(code);
+  }
+  return set;
+}
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -173,7 +196,6 @@ export function DocumentExplorer() {
   const [doc, setDoc] = useState<DocumentDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"table" | "json" | "xml">("table");
 
   async function handleSelect(item: SearchResult) {
     setSelected(item);
@@ -197,7 +219,6 @@ export function DocumentExplorer() {
       }
       const payload = (await res.json()) as DocumentDetail;
       setDoc(payload);
-      setViewMode("table");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       setError(message);
@@ -205,12 +226,6 @@ export function DocumentExplorer() {
       setLoading(false);
     }
   }
-
-  const jsonData = useMemo(() => {
-    if (!doc) return {};
-    const { marcxml: _, ...rest } = doc;
-    return rest;
-  }, [doc]);
 
   return (
     <section className="space-y-6">
@@ -271,9 +286,7 @@ export function DocumentExplorer() {
                   <Building2 className="h-3.5 w-3.5" />
                   {doc.un_body}
                   {doc.un_committee && (
-                    <span className="text-gray-400">
-                      / {doc.un_committee}
-                    </span>
+                    <span className="text-gray-400">/ {doc.un_committee}</span>
                   )}
                 </span>
               )}
@@ -281,10 +294,9 @@ export function DocumentExplorer() {
                 <span className="flex items-center gap-1">
                   <Calendar className="h-3.5 w-3.5" />
                   {doc.date_publication}
-                  {doc.date_text &&
-                    doc.date_text !== doc.date_publication && (
-                      <span className="text-gray-400">({doc.date_text})</span>
-                    )}
+                  {doc.date_text && doc.date_text !== doc.date_publication && (
+                    <span className="text-gray-400">({doc.date_text})</span>
+                  )}
                 </span>
               )}
               {doc.languages.length > 0 && (
@@ -301,7 +313,7 @@ export function DocumentExplorer() {
               )}
             </div>
 
-            {/* ODS action buttons */}
+            {/* Action buttons */}
             {doc.document_symbol && (() => {
               const urls = getDocumentUrls(doc.document_symbol);
               return (
@@ -342,212 +354,188 @@ export function DocumentExplorer() {
                     <ExternalLink className="h-3.5 w-3.5" />
                     Digital Library
                   </a>
+                  <a
+                    href={`/v1/documents/${doc.recid}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                  >
+                    <Braces className="h-3.5 w-3.5" />
+                    JSON
+                  </a>
+                  <a
+                    href={`/v1/marcxml/recid/${doc.recid}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                  >
+                    <Code2 className="h-3.5 w-3.5" />
+                    MARCXML
+                  </a>
                 </div>
               );
             })()}
           </div>
 
-          {/* View mode tabs */}
-          <div className="flex gap-1 rounded-lg bg-gray-100 p-1">
-            {(
-              [
-                ["table", "Metadata"],
-                ["json", "JSON"],
-                ["xml", "MARCXML"],
-              ] as const
-            ).map(([mode, label]) => (
-              <button
-                key={mode}
-                type="button"
-                className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                  viewMode === mode
-                    ? "bg-white text-gray-900 shadow-sm"
-                    : "text-gray-500 hover:text-gray-700"
-                }`}
-                onClick={() => setViewMode(mode)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          {/* Metadata */}
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* Summary & notes */}
+            {(doc.summary || doc.notes.length > 0) && (
+              <div className="md:col-span-2">
+                <SectionCard icon={BookOpen} title="Summary">
+                  {doc.summary && (
+                    <p className="text-sm leading-relaxed text-gray-700">
+                      {doc.summary}
+                    </p>
+                  )}
+                  {doc.notes.length > 0 && (
+                    <ul className="mt-2 space-y-1">
+                      {doc.notes.map((n, i) => (
+                        <li key={i} className="text-sm leading-relaxed text-gray-600">
+                          {n}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </SectionCard>
+              </div>
+            )}
 
-          {/* Metadata view */}
-          {viewMode === "table" && (
-            <div className="grid gap-4 md:grid-cols-2">
-              {/* Summary & notes */}
-              {(doc.summary || doc.notes.length > 0) && (
-                <div className="md:col-span-2">
-                  <SectionCard icon={BookOpen} title="Summary">
-                    {doc.summary && (
-                      <p className="text-sm leading-relaxed text-gray-700">
-                        {doc.summary}
-                      </p>
-                    )}
-                    {doc.notes.length > 0 && (
-                      <ul className="mt-2 space-y-1">
-                        {doc.notes.map((n, i) => (
-                          <li
-                            key={i}
-                            className="text-sm leading-relaxed text-gray-600"
-                          >
-                            {n}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </SectionCard>
+            {/* Subjects */}
+            {doc.subjects.length > 0 && (
+              <SectionCard icon={TagIcon} title="Subjects">
+                <div className="flex flex-wrap gap-1.5">
+                  {doc.subjects.map((s) => (
+                    <Chip key={s}>{s}</Chip>
+                  ))}
                 </div>
-              )}
+              </SectionCard>
+            )}
 
-              {/* Subjects */}
-              {doc.subjects.length > 0 && (
-                <SectionCard icon={TagIcon} title="Subjects">
-                  <div className="flex flex-wrap gap-1.5">
-                    {doc.subjects.map((s) => (
-                      <Chip key={s}>{s}</Chip>
-                    ))}
-                  </div>
-                </SectionCard>
-              )}
+            {/* Authors */}
+            {doc.corporate_authors.length > 0 && (
+              <SectionCard icon={Users} title="Authors">
+                <div className="flex flex-wrap gap-1.5">
+                  {doc.corporate_authors.map((a, i) => (
+                    <Chip key={`${a.name}-${i}`}>
+                      {a.name}
+                      {a.type && (
+                        <span className="ml-1 text-gray-400">[{a.type}]</span>
+                      )}
+                    </Chip>
+                  ))}
+                </div>
+              </SectionCard>
+            )}
 
-              {/* Authors */}
-              {doc.corporate_authors.length > 0 && (
-                <SectionCard icon={Users} title="Authors">
-                  <div className="flex flex-wrap gap-1.5">
-                    {doc.corporate_authors.map((a, i) => (
-                      <Chip key={`${a.name}-${i}`}>
-                        {a.name}
-                        {a.type && (
-                          <span className="ml-1 text-gray-400">[{a.type}]</span>
-                        )}
-                      </Chip>
-                    ))}
-                  </div>
-                </SectionCard>
-              )}
-
-              {/* Files */}
-              {doc.files.length > 0 && (
+            {/* Files */}
+            {doc.document_symbol && (() => {
+              const available = getAvailableCodes(doc.languages);
+              const sym = encodeURIComponent(doc.document_symbol!);
+              return (
                 <SectionCard icon={FileDown} title="Files">
                   <div className="grid gap-2 sm:grid-cols-2">
-                    {doc.files.map((f, i) => (
-                      <a
-                        key={i}
-                        href={f.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm transition-colors hover:border-un-blue/30 hover:bg-un-blue/5"
-                      >
-                        <FileDown className="h-4 w-4 shrink-0 text-un-blue" />
-                        <span className="font-medium text-gray-800">
-                          {f.lang || "Download"}
-                        </span>
-                        {f.size && (
-                          <span className="ml-auto text-xs text-gray-400">
-                            {formatSize(f.size)}
+                    {UN_LANGUAGES.map((lang) => {
+                      const on = available.has(lang.code);
+                      const pdf = `https://documents.un.org/api/symbol/access?s=${sym}&l=${lang.code}&t=pdf`;
+                      const docx = `https://documents.un.org/api/symbol/access?s=${sym}&l=${lang.code}&t=doc`;
+                      return (
+                        <div
+                          key={lang.code}
+                          className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${on ? "border-gray-200 bg-white" : "border-gray-100 bg-gray-50"}`}
+                        >
+                          <span className={`flex-1 font-medium ${on ? "text-gray-800" : "text-gray-300"}`}>
+                            {lang.native}
                           </span>
-                        )}
-                      </a>
-                    ))}
+                          {on ? (
+                            <>
+                              <a href={pdf} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded border border-gray-200 px-1.5 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-100">
+                                <FileDown className="h-3 w-3" />PDF
+                              </a>
+                              <a href={docx} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded border border-gray-200 px-1.5 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-100">
+                                <FileText className="h-3 w-3" />DOCX
+                              </a>
+                            </>
+                          ) : (
+                            <>
+                              <span className="inline-flex items-center gap-1 rounded border border-gray-100 px-1.5 py-0.5 text-xs text-gray-300">
+                                <FileDown className="h-3 w-3" />PDF
+                              </span>
+                              <span className="inline-flex items-center gap-1 rounded border border-gray-100 px-1.5 py-0.5 text-xs text-gray-300">
+                                <FileText className="h-3 w-3" />DOCX
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </SectionCard>
-              )}
+              );
+            })()}
 
-              {/* Classification */}
-              {(doc.doc_class_desc || doc.publisher) && (
-                <SectionCard icon={Scale} title="Classification">
-                  {doc.doc_class_desc && (
-                    <Field label="Document class">
-                      {doc.doc_class_desc}
-                      {doc.doc_class_code && (
-                        <span className="ml-1 text-gray-400">
-                          ({doc.doc_class_code})
+            {/* Classification */}
+            {(doc.doc_class_desc || doc.publisher) && (
+              <SectionCard icon={Scale} title="Classification">
+                {doc.doc_class_desc && (
+                  <Field label="Document class">
+                    {doc.doc_class_desc}
+                    {doc.doc_class_code && (
+                      <span className="ml-1 text-gray-400">
+                        ({doc.doc_class_code})
+                      </span>
+                    )}
+                  </Field>
+                )}
+                {doc.publisher && (
+                  <Field label="Publisher">
+                    {[doc.pub_place, doc.publisher].filter(Boolean).join(", ")}
+                  </Field>
+                )}
+                {doc.physical_desc && (
+                  <Field label="Extent">{doc.physical_desc}</Field>
+                )}
+              </SectionCard>
+            )}
+
+            {/* Voting */}
+            {doc.vote_summary && (
+              <SectionCard icon={Vote} title="Voting">
+                <p className="text-sm text-gray-700">{doc.vote_summary}</p>
+              </SectionCard>
+            )}
+
+            {/* Agenda items */}
+            {doc.agenda_items.length > 0 && (
+              <SectionCard icon={ClipboardList} title="Agenda">
+                <ul className="space-y-1.5">
+                  {doc.agenda_items.map((a, i) => (
+                    <li key={i} className="text-sm text-gray-700">
+                      {a.item && (
+                        <span className="mr-1 font-medium text-gray-900">
+                          Item {a.item}:
                         </span>
                       )}
-                    </Field>
-                  )}
-                  {doc.publisher && (
-                    <Field label="Publisher">
-                      {[doc.pub_place, doc.publisher]
-                        .filter(Boolean)
-                        .join(", ")}
-                    </Field>
-                  )}
-                  {doc.physical_desc && (
-                    <Field label="Extent">{doc.physical_desc}</Field>
-                  )}
-                </SectionCard>
-              )}
+                      {a.topic || a.desc || a.doc}
+                    </li>
+                  ))}
+                </ul>
+              </SectionCard>
+            )}
 
-              {/* Voting */}
-              {doc.vote_summary && (
-                <SectionCard icon={Vote} title="Voting">
-                  <p className="text-sm text-gray-700">{doc.vote_summary}</p>
-                </SectionCard>
-              )}
-
-              {/* Agenda items */}
-              {doc.agenda_items.length > 0 && (
-                <SectionCard icon={ClipboardList} title="Agenda">
-                  <ul className="space-y-1.5">
-                    {doc.agenda_items.map((a, i) => (
-                      <li key={i} className="text-sm text-gray-700">
-                        {a.item && (
-                          <span className="mr-1 font-medium text-gray-900">
-                            Item {a.item}:
-                          </span>
-                        )}
-                        {a.topic || a.desc || a.doc}
-                      </li>
-                    ))}
-                  </ul>
-                </SectionCard>
-              )}
-
-              {/* Related documents */}
-              {doc.related_documents.length > 0 && (
-                <SectionCard icon={LinkIcon} title="Related Documents">
-                  <div className="flex flex-wrap gap-1.5">
-                    {doc.related_documents.map((r, i) => (
-                      <Chip key={`${r.symbol}-${i}`} variant="blue">
-                        {r.symbol}
-                      </Chip>
-                    ))}
-                  </div>
-                </SectionCard>
-              )}
-            </div>
-          )}
-
-          {/* JSON view */}
-          {viewMode === "json" && (
-            <div className="overflow-auto rounded-xl border border-gray-200 bg-white p-4 text-sm shadow-sm">
-              <JsonView
-                data={jsonData}
-                shouldExpandNode={allExpanded}
-                style={defaultStyles}
-              />
-            </div>
-          )}
-
-          {/* XML view */}
-          {viewMode === "xml" && doc.marcxml && (
-            <div className="overflow-auto rounded-xl border border-gray-200 bg-white shadow-sm">
-              <SyntaxHighlighter
-                language="xml"
-                style={oneLight}
-                customStyle={{ margin: 0, padding: "1rem", borderRadius: "0.75rem" }}
-                wrapLongLines
-              >
-                {doc.marcxml}
-              </SyntaxHighlighter>
-            </div>
-          )}
-          {viewMode === "xml" && !doc.marcxml && (
-            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">
-              No MARCXML payload available for this record.
-            </div>
-          )}
+            {/* Related documents */}
+            {doc.related_documents.length > 0 && (
+              <SectionCard icon={LinkIcon} title="Related Documents">
+                <div className="flex flex-wrap gap-1.5">
+                  {doc.related_documents.map((r, i) => (
+                    <Chip key={`${r.symbol}-${i}`} variant="blue">
+                      {r.symbol}
+                    </Chip>
+                  ))}
+                </div>
+              </SectionCard>
+            )}
+          </div>
         </div>
       )}
 

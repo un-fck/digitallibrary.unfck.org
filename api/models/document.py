@@ -35,7 +35,7 @@ class DocumentSummary(BaseModel):
     """Compact representation for list/search results."""
 
     recid: int
-    document_symbol: str | None = None
+    symbol: str | None = None
     title: str | None = None
     date_publication: date | None = None
     un_body: str | None = None

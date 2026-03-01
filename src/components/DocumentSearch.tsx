@@ -37,11 +37,15 @@ export function DocumentSearch({
     }
     setSearching(true);
     fetch(`/api/documents/search?q=${encodeURIComponent(q)}`)
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${r.status}`))))
       .then((data) => {
         setResults(data);
         setOpen(true);
         setHighlighted(data.length > 0 ? 0 : -1);
+      })
+      .catch(() => {
+        setResults([]);
+        setOpen(false);
       })
       .finally(() => setSearching(false));
   }, []);

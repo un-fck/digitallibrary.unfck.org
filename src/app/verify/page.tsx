@@ -1,13 +1,10 @@
 import { Suspense } from "react";
 import { Header } from "@/components/Header";
 import { VerifyForm } from "@/features/auth/ui/VerifyForm";
-import { fetchEntities } from "@/lib/data/entities";
 
 export const dynamic = "force-dynamic";
 
 export default async function VerifyPage() {
-  const entities = await fetchEntities();
-
   return (
     <div className="flex min-h-screen flex-col bg-white">
       <Header maxWidth="6xl" />
@@ -17,10 +14,10 @@ export default async function VerifyPage() {
             Complete Sign-In
           </h2>
           <p className="mb-6 text-sm text-gray-500">
-            Select your entity to continue
+            Click the button below to sign in.
           </p>
           <Suspense fallback={<p className="text-gray-500">Loading...</p>}>
-            <VerifyForm entities={entities} />
+            <VerifyForm />
           </Suspense>
         </div>
       </main>

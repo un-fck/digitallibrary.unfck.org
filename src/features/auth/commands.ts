@@ -2,14 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { tables } from "@/lib/db/config";
-import { query } from "@/lib/db/db";
 import { sendMagicLink } from "./mail";
 import {
   clearSession,
   createMagicToken,
   createSession,
-  getCurrentUser,
   recentTokenExists,
   upsertUser,
   verifyMagicToken as verifyMagicTokenService,
@@ -41,37 +38,7 @@ export async function requestMagicLink(email: string): Promise<ActionResult> {
   }
 }
 
-export async function checkEntityForToken(
-  token: string,
-): Promise<
-  ActionResult<{ email: string; hasEntity: boolean; entity: string | null }>
-> {
-  if (!token || typeof token !== "string") {
-    return { success: false, error: "Missing token" };
-  }
-  const tokenRows = await query<{ email: string }>(
-    `SELECT email FROM ${tables.magic_tokens} WHERE token = $1 AND expires_at > NOW() AND used_at IS NULL`,
-    [token],
-  );
-  if (!tokenRows[0]) {
-    return { success: false, error: "Invalid or expired token" };
-  }
-  const email = tokenRows[0].email;
-  const userRows = await query<{ entity: string | null }>(
-    `SELECT entity FROM ${tables.users} WHERE email = $1`,
-    [email.toLowerCase()],
-  );
-  const existingEntity = userRows[0]?.entity || null;
-  return {
-    success: true,
-    data: { email, hasEntity: !!existingEntity, entity: existingEntity },
-  };
-}
-
-export async function verifyMagicToken(
-  token: string,
-  entity?: string,
-): Promise<ActionResult> {
+export async function verifyMagicToken(token: string): Promise<ActionResult> {
   if (!token || typeof token !== "string") {
     return { success: false, error: "Missing token" };
   }
@@ -80,29 +47,7 @@ export async function verifyMagicToken(
     return { success: false, error: "Invalid or expired link" };
   }
   const userId = await upsertUser(email);
-  if (entity && typeof entity === "string" && entity.trim()) {
-    await query(`UPDATE ${tables.users} SET entity = $1 WHERE id = $2`, [
-      entity.trim(),
-      userId,
-    ]);
-  }
   await createSession(userId);
-  revalidatePath("/", "layout");
-  return { success: true };
-}
-
-export async function updateEntity(entity: string): Promise<ActionResult> {
-  const user = await getCurrentUser();
-  if (!user) {
-    return { success: false, error: "Unauthorized" };
-  }
-  if (!entity || typeof entity !== "string" || !entity.trim()) {
-    return { success: false, error: "Entity is required" };
-  }
-  await query(`UPDATE ${tables.users} SET entity = $1 WHERE id = $2`, [
-    entity.trim(),
-    user.id,
-  ]);
   revalidatePath("/", "layout");
   return { success: true };
 }

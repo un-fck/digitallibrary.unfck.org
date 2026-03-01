@@ -2,28 +2,28 @@
 
 from __future__ import annotations
 
-import math
 from datetime import date
 
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 
-# Columns returned for list/search (compact)
+# Columns returned for list/search (compact).
+# document_symbol aliased to symbol for API consistency.
 SUMMARY_COLS = """
-    recid, document_symbol, title, date_publication,
+    recid, document_symbol AS symbol, title, date_publication,
     un_body, resource_type, languages, summary
 """
 
-# All columns for detail view
+# All columns for detail view — marcxml excluded (fetched separately).
 DETAIL_COLS = """
-    recid, document_symbol, symbol_body, symbol_session, symbol_committee,
+    recid, document_symbol AS symbol, symbol_body, symbol_session, symbol_committee,
     title, title_statement, date_publication, date_text,
     publisher, pub_place, physical_desc,
     doc_class_code, doc_class_desc, languages, subjects,
     corporate_authors, un_body, un_committee, notes, summary,
     files, collections, resource_type, resource_subtype,
     vote_summary, agenda_items, related_documents,
-    marcxml, harvested_at
+    harvested_at
 """
 
 
@@ -36,20 +36,39 @@ async def get_by_recid(conn: AsyncConnection, recid: int) -> dict | None:
         return await cur.fetchone()
 
 
-async def get_by_symbol(conn: AsyncConnection, symbol: str) -> list[dict]:
+async def get_by_symbol(conn: AsyncConnection, symbol: str) -> dict | None:
+    """Return the document matching the symbol (case-insensitive).
+
+    If somehow multiple records share a symbol, returns the most recently
+    published one.
+    """
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
-            f"SELECT {DETAIL_COLS} FROM digitallibrary.documents WHERE document_symbol = %s AND deleted_at IS NULL ORDER BY date_publication DESC NULLS LAST",
+            f"SELECT {DETAIL_COLS} FROM digitallibrary.documents "
+            f"WHERE UPPER(document_symbol) = UPPER(%s) AND deleted_at IS NULL "
+            f"ORDER BY date_publication DESC NULLS LAST LIMIT 1",
             (symbol,),
         )
-        return await cur.fetchall()
+        return await cur.fetchone()
 
 
-async def get_marcxml(conn: AsyncConnection, recid: int) -> str | None:
+async def get_marcxml_by_recid(conn: AsyncConnection, recid: int) -> str | None:
     async with conn.cursor() as cur:
         await cur.execute(
             "SELECT marcxml FROM digitallibrary.documents WHERE recid = %s AND deleted_at IS NULL",
             (recid,),
+        )
+        row = await cur.fetchone()
+        return row[0] if row else None
+
+
+async def get_marcxml_by_symbol(conn: AsyncConnection, symbol: str) -> str | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "SELECT marcxml FROM digitallibrary.documents "
+            "WHERE UPPER(document_symbol) = UPPER(%s) AND deleted_at IS NULL "
+            "ORDER BY date_publication DESC NULLS LAST LIMIT 1",
+            (symbol,),
         )
         row = await cur.fetchone()
         return row[0] if row else None
@@ -74,12 +93,14 @@ async def list_documents(
     conditions: list[str] = ["deleted_at IS NULL"]
     params: list = []
     idx = 1
+    q_idx: int | None = None  # tracks position of q param for relevance sort
 
     if q:
         conditions.append(
             f"(document_symbol ILIKE ${idx} || '%%' OR title ILIKE '%%' || ${idx} || '%%')"
         )
         params.append(q)
+        q_idx = idx
         idx += 1
 
     if symbol:
@@ -125,21 +146,20 @@ async def list_documents(
         "symbol_asc": "document_symbol ASC NULLS LAST",
     }
     order_by = sort_map.get(sort, "date_publication DESC NULLS LAST")
-    if q and sort == "relevance":
-        # Rough relevance: exact symbol match first, then title match
-        order_by = f"(document_symbol ILIKE ${1} || '%%')::int DESC, date_publication DESC NULLS LAST"
+
+    if sort == "relevance" and q_idx is not None:
+        # Symbol prefix match ranks above title match, then by date
+        order_by = f"(document_symbol ILIKE ${q_idx} || '%%')::int DESC, date_publication DESC NULLS LAST"
 
     offset = (page - 1) * per_page
 
     async with conn.cursor(row_factory=dict_row) as cur:
-        # Count
         await cur.execute(
             f"SELECT count(*) FROM digitallibrary.documents WHERE {where}",
             params,
         )
         total = (await cur.fetchone())["count"]
 
-        # Results
         await cur.execute(
             f"SELECT {SUMMARY_COLS} FROM digitallibrary.documents WHERE {where} ORDER BY {order_by} LIMIT {per_page} OFFSET {offset}",
             params,
@@ -180,28 +200,24 @@ async def get_facets(
     facets: dict = {}
 
     async with conn.cursor(row_factory=dict_row) as cur:
-        # UN body facet
         await cur.execute(
             f"SELECT un_body AS value, count(*) AS count FROM digitallibrary.documents WHERE {where} AND un_body IS NOT NULL GROUP BY un_body ORDER BY count DESC LIMIT 50",
             params,
         )
         facets["un_body"] = await cur.fetchall()
 
-        # Resource type facet
         await cur.execute(
             f"SELECT resource_type AS value, count(*) AS count FROM digitallibrary.documents WHERE {where} AND resource_type IS NOT NULL GROUP BY resource_type ORDER BY count DESC LIMIT 50",
             params,
         )
         facets["resource_type"] = await cur.fetchall()
 
-        # Language facet (unnest array)
         await cur.execute(
             f"SELECT lang AS value, count(*) AS count FROM (SELECT unnest(languages) AS lang FROM digitallibrary.documents WHERE {where}) sub GROUP BY lang ORDER BY count DESC LIMIT 30",
             params,
         )
         facets["language"] = await cur.fetchall()
 
-        # Year facet
         await cur.execute(
             f"SELECT EXTRACT(YEAR FROM date_publication)::int AS value, count(*) AS count FROM digitallibrary.documents WHERE {where} AND date_publication IS NOT NULL GROUP BY value ORDER BY value DESC LIMIT 100",
             params,

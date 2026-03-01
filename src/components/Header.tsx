@@ -1,12 +1,10 @@
 import Image from "next/image";
 import Link from "next/link";
 import { UserMenu } from "./UserMenu";
-import type { EntityOption } from "./EntityCombobox";
 
 interface Props {
-  user?: { email: string; entity?: string | null } | null;
+  user?: { email: string } | null;
   children?: React.ReactNode;
-  entities?: EntityOption[];
   maxWidth?: "5xl" | "6xl" | "7xl";
   activePage?: "home" | "docs" | "developer";
 }
@@ -40,7 +38,6 @@ function NavLink({
 export function Header({
   user,
   children,
-  entities = [],
   maxWidth = "7xl",
   activePage,
 }: Props) {
@@ -79,7 +76,7 @@ export function Header({
         </Link>
         <nav className="flex items-center gap-1">
           <NavLink href="/" active={activePage === "home"}>
-            Documents
+            Search
           </NavLink>
           <NavLink href="/docs" active={activePage === "docs"}>
             API Docs
@@ -91,11 +88,7 @@ export function Header({
           )}
           <div className="ml-2">
             {isLoggedIn ? (
-              <UserMenu
-                email={user.email}
-                entity={user.entity}
-                entities={entities}
-              />
+              <UserMenu email={user.email} />
             ) : (
               <Link
                 href="/login"
