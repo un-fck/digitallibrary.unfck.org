@@ -5,8 +5,7 @@ Designed to run nightly via GitHub Action. State is stored in the database
 (digitallibrary.harvest_state) so it works across ephemeral CI runners.
 
 Usage:
-    uv run python python/harvest_incremental.py                  # auto (reads watermark from DB)
-    uv run python python/harvest_incremental.py --since 2026-02-15
+    uv run python python/harvest_incremental.py           # auto (reads watermark from DB)
     uv run python python/harvest_incremental.py --dry-run
 """
 
@@ -209,7 +208,6 @@ def prepare_row(rec: dict) -> dict:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Incremental UNDL harvest")
-    parser.add_argument("--since", help="Override: fetch records from this date (YYYY-MM-DD)")
     parser.add_argument("--dry-run", action="store_true", help="Fetch and parse only, no DB writes")
     return parser.parse_args()
 
