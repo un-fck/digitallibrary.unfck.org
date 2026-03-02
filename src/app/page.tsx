@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { Footer } from "@/components/Footer";
 import { Header } from "@/components/Header";
 import { DocumentExplorer } from "@/components/DocumentExplorer";
@@ -13,7 +14,9 @@ export default async function Home() {
       <Header user={user} maxWidth="5xl" activePage="home" />
       <main className="flex-1 px-4 py-10 sm:px-6">
         <div className="mx-auto max-w-5xl">
-          <DocumentExplorer />
+          <Suspense>
+            <DocumentExplorer />
+          </Suspense>
         </div>
       </main>
       <Footer />

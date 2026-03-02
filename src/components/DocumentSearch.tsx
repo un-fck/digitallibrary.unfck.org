@@ -14,11 +14,14 @@ export interface SearchResult {
 interface Props {
   onSelect?: (doc: SearchResult) => void;
   placeholder?: string;
+  /** When this changes, prefill the search box and fire a search */
+  initialQuery?: string;
 }
 
 export function DocumentSearch({
   onSelect,
   placeholder = "Search documents...",
+  initialQuery,
 }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -28,6 +31,7 @@ export function DocumentSearch({
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const prevInitialQuery = useRef<string | undefined>(undefined);
 
   const search = useCallback((q: string) => {
     if (q.length < 2) {
@@ -53,7 +57,7 @@ export function DocumentSearch({
   const handleChange = (value: string) => {
     setQuery(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => search(value), 200);
+    debounceRef.current = setTimeout(() => search(value), 80);
   };
 
   const handleSelect = (doc: SearchResult) => {
@@ -84,6 +88,17 @@ export function DocumentSearch({
         break;
     }
   };
+
+  // When initialQuery changes from outside (e.g. subject click), prefill and search
+  useEffect(() => {
+    if (initialQuery !== undefined && initialQuery !== prevInitialQuery.current) {
+      prevInitialQuery.current = initialQuery;
+      if (initialQuery.length >= 2) {
+        setQuery(initialQuery);
+        search(initialQuery);
+      }
+    }
+  }, [initialQuery, search]);
 
   // Scroll highlighted item into view
   useEffect(() => {

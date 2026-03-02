@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { DocumentSearch, type SearchResult } from "@/components/DocumentSearch";
 import {
   Calendar,
@@ -172,59 +173,124 @@ const UN_LANGUAGES = [
 
 function getAvailableCodes(languages: string[]): Set<string> {
   const map: Record<string, string> = {
-    arabic: "ar",  العربية: "ar",
-    chinese: "zh", 中文: "zh",
-    english: "en",
-    french: "fr",  français: "fr", francais: "fr",
-    russian: "ru", русский: "ru",
-    spanish: "es", español: "es", espanol: "es",
+    "arabic": "ar", "العربية": "ar", "ara": "ar",
+    "chinese": "zh", "中文": "zh", "chi": "zh", "zho": "zh",
+    "english": "en", "eng": "en",
+    "french": "fr", "français": "fr", "francais": "fr", "fre": "fr", "fra": "fr",
+    "russian": "ru", "русский": "ru", "rus": "ru",
+    "spanish": "es", "español": "es", "espanol": "es", "spa": "es",
   };
   const set = new Set<string>();
-  for (const lang of languages) {
-    const code = map[lang.toLowerCase()] ?? (lang.length === 2 ? lang.toLowerCase() : null);
+  for (const lang of (languages ?? [])) {
+    const lower = lang.toLowerCase();
+    const code = map[lower] ?? (lang.length === 2 ? lower : null);
     if (code) set.add(code);
   }
   return set;
 }
+
+function langDisplay(code: string): string {
+  const map: Record<string, string> = {
+    "ar": "Arabic", "ara": "Arabic",
+    "zh": "Chinese", "chi": "Chinese", "zho": "Chinese",
+    "en": "English", "eng": "English",
+    "fr": "French", "fre": "French", "fra": "French",
+    "ru": "Russian", "rus": "Russian",
+    "es": "Spanish", "spa": "Spanish",
+  };
+  return map[code.toLowerCase()] ?? code;
+}
+
+function toTitleCase(s: string): string {
+  return s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function cleanTopic(s: string): string {
+  return toTitleCase(s.replace(/^UN--/i, "").replace(/--/g, " – "));
+}
+
+function cleanPublisher(pub: string | null, place: string | null): string {
+  const trim = (s: string) => s.replace(/[,:;]\s*$/, "").trim();
+  return [place, pub].filter(Boolean).map((s) => trim(s!)).join(", ");
+}
+
+const RELATIONSHIP_LABELS: Record<string, string> = {
+  "1": "Successor",
+  "2": "Draft",
+  "3": "Related",
+  "4": "Verbatim Record",
+};
+
+const AUTHOR_TYPE_LABELS: Record<string, string> = {
+  "ms": "Member State",
+  "ngo": "NGO",
+  "igo": "IGO",
+};
 
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
 export function DocumentExplorer() {
-  const [selected, setSelected] = useState<SearchResult | null>(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [doc, setDoc] = useState<DocumentDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [subjectQuery, setSubjectQuery] = useState<string | undefined>(undefined);
 
-  async function handleSelect(item: SearchResult) {
-    setSelected(item);
+  async function loadDocument(recid: number) {
     setDoc(null);
     setError(null);
-    if (!item.recid) {
-      setError("Selected result has no recid.");
-      return;
-    }
-
     setLoading(true);
     try {
-      const res = await fetch(`/api/documents/${item.recid}`);
+      const res = await fetch(`/api/documents/${recid}`);
       if (!res.ok) {
-        const payload = (await res.json().catch(() => ({}))) as {
-          error?: string;
-        };
-        throw new Error(
-          payload.error || `Failed to load document ${item.recid}`,
-        );
+        const payload = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || `Failed to load document ${recid}`);
       }
-      const payload = (await res.json()) as DocumentDetail;
-      setDoc(payload);
+      setDoc((await res.json()) as DocumentDetail);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      setError(message);
+      setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setLoading(false);
     }
+  }
+
+  async function loadBySymbol(symbol: string) {
+    setDoc(null);
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/documents/symbol?s=${encodeURIComponent(symbol)}`);
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || `No document found for symbol '${symbol}'`);
+      }
+      const payload = (await res.json()) as DocumentDetail;
+      setDoc(payload);
+      router.replace(`/?recid=${payload.recid}`, { scroll: false });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Auto-load document from URL on mount
+  useEffect(() => {
+    const recidParam = searchParams.get("recid");
+    if (recidParam) {
+      const n = Number.parseInt(recidParam, 10);
+      if (Number.isFinite(n)) loadDocument(n);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleSelect(item: SearchResult) {
+    if (!item.recid) { setError("Selected result has no recid."); return; }
+    router.replace(`/?recid=${item.recid}`, { scroll: false });
+    await loadDocument(item.recid);
   }
 
   return (
@@ -232,6 +298,7 @@ export function DocumentExplorer() {
       <DocumentSearch
         onSelect={handleSelect}
         placeholder="Search by symbol, title, or record ID..."
+        initialQuery={subjectQuery}
       />
 
       {/* Loading */}
@@ -302,7 +369,7 @@ export function DocumentExplorer() {
               {doc.languages.length > 0 && (
                 <span className="flex items-center gap-1">
                   <Globe className="h-3.5 w-3.5" />
-                  {doc.languages.join(", ")}
+                  {[...new Set(doc.languages.map(langDisplay))].join(", ")}
                 </span>
               )}
               {doc.resource_type && (
@@ -355,7 +422,7 @@ export function DocumentExplorer() {
                     Digital Library
                   </a>
                   <a
-                    href={`/v1/documents/${doc.recid}`}
+                    href={`/v1/documents/recid/${doc.recid}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
@@ -406,7 +473,14 @@ export function DocumentExplorer() {
               <SectionCard icon={TagIcon} title="Subjects">
                 <div className="flex flex-wrap gap-1.5">
                   {doc.subjects.map((s) => (
-                    <Chip key={s}>{s}</Chip>
+                    <button
+                      key={s}
+                      onClick={() => setSubjectQuery(toTitleCase(s))}
+                      className="inline-flex items-center rounded-md border border-gray-200 bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 transition-colors hover:border-un-blue/30 hover:bg-un-blue/8 hover:text-un-blue"
+                      title={`Search for "${toTitleCase(s)}"`}
+                    >
+                      {toTitleCase(s)}
+                    </button>
                   ))}
                 </div>
               </SectionCard>
@@ -419,8 +493,10 @@ export function DocumentExplorer() {
                   {doc.corporate_authors.map((a, i) => (
                     <Chip key={`${a.name}-${i}`}>
                       {a.name}
-                      {a.type && (
-                        <span className="ml-1 text-gray-400">[{a.type}]</span>
+                      {a.type && AUTHOR_TYPE_LABELS[a.type] && (
+                        <span className="ml-1.5 rounded bg-gray-200 px-1 py-0.5 text-[10px] font-semibold text-gray-500">
+                          {AUTHOR_TYPE_LABELS[a.type]}
+                        </span>
                       )}
                     </Chip>
                   ))}
@@ -430,7 +506,9 @@ export function DocumentExplorer() {
 
             {/* Files */}
             {doc.document_symbol && (() => {
-              const available = getAvailableCodes(doc.languages);
+              // Derive available languages from actual files (more reliable than doc.languages)
+              const fileLangs = doc.files.map((f) => f.lang).filter(Boolean) as string[];
+              const available = getAvailableCodes([...doc.languages, ...fileLangs]);
               const sym = encodeURIComponent(doc.document_symbol!);
               return (
                 <SectionCard icon={FileDown} title="Files">
@@ -475,21 +553,19 @@ export function DocumentExplorer() {
             })()}
 
             {/* Classification */}
-            {(doc.doc_class_desc || doc.publisher) && (
+            {(doc.doc_class_desc || doc.doc_class_code || doc.publisher || doc.pub_place || doc.physical_desc) && (
               <SectionCard icon={Scale} title="Classification">
-                {doc.doc_class_desc && (
+                {(doc.doc_class_desc || doc.doc_class_code) && (
                   <Field label="Document class">
-                    {doc.doc_class_desc}
-                    {doc.doc_class_code && (
-                      <span className="ml-1 text-gray-400">
-                        ({doc.doc_class_code})
-                      </span>
+                    {doc.doc_class_desc ?? doc.doc_class_code}
+                    {doc.doc_class_desc && doc.doc_class_code && (
+                      <span className="ml-1 text-gray-400">({doc.doc_class_code})</span>
                     )}
                   </Field>
                 )}
-                {doc.publisher && (
+                {(doc.publisher || doc.pub_place) && (
                   <Field label="Publisher">
-                    {[doc.pub_place, doc.publisher].filter(Boolean).join(", ")}
+                    {cleanPublisher(doc.publisher, doc.pub_place)}
                   </Field>
                 )}
                 {doc.physical_desc && (
@@ -508,15 +584,27 @@ export function DocumentExplorer() {
             {/* Agenda items */}
             {doc.agenda_items.length > 0 && (
               <SectionCard icon={ClipboardList} title="Agenda">
-                <ul className="space-y-1.5">
+                <ul className="space-y-2">
                   {doc.agenda_items.map((a, i) => (
                     <li key={i} className="text-sm text-gray-700">
-                      {a.item && (
-                        <span className="mr-1 font-medium text-gray-900">
-                          Item {a.item}:
-                        </span>
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                        {a.item && (
+                          <span className="font-medium text-gray-900">Item {a.item}</span>
+                        )}
+                        {a.doc && (
+                          <button
+                            onClick={() => loadBySymbol(a.doc!)}
+                            className="font-mono text-xs text-un-blue hover:underline"
+                          >
+                            {a.doc}
+                          </button>
+                        )}
+                      </div>
+                      {(a.desc || a.topic) && (
+                        <p className="mt-0.5 text-gray-600">
+                          {a.desc ?? (a.topic ? cleanTopic(a.topic) : null)}
+                        </p>
                       )}
-                      {a.topic || a.desc || a.doc}
                     </li>
                   ))}
                 </ul>
@@ -524,17 +612,43 @@ export function DocumentExplorer() {
             )}
 
             {/* Related documents */}
-            {doc.related_documents.length > 0 && (
-              <SectionCard icon={LinkIcon} title="Related Documents">
-                <div className="flex flex-wrap gap-1.5">
-                  {doc.related_documents.map((r, i) => (
-                    <Chip key={`${r.symbol}-${i}`} variant="blue">
-                      {r.symbol}
-                    </Chip>
-                  ))}
-                </div>
-              </SectionCard>
-            )}
+            {doc.related_documents.length > 0 && (() => {
+              // Group by relationship type
+              const groups = doc.related_documents.reduce<Record<string, RelatedDoc[]>>(
+                (acc, r) => {
+                  const key = r.relationship ?? "";
+                  (acc[key] ??= []).push(r);
+                  return acc;
+                },
+                {},
+              );
+              return (
+                <SectionCard icon={LinkIcon} title="Related Documents">
+                  <div className="space-y-2">
+                    {Object.entries(groups).map(([rel, docs]) => (
+                      <div key={rel}>
+                        {rel && RELATIONSHIP_LABELS[rel] && (
+                          <p className="mb-1 text-xs font-medium text-gray-400 uppercase tracking-wide">
+                            {RELATIONSHIP_LABELS[rel]}
+                          </p>
+                        )}
+                        <div className="flex flex-wrap gap-1.5">
+                          {docs.map((r, i) => (
+                            <button
+                              key={`${r.symbol}-${i}`}
+                              onClick={() => loadBySymbol(r.symbol)}
+                              className="inline-flex items-center rounded-md border border-un-blue/15 bg-un-blue/8 px-2 py-0.5 text-xs font-medium text-un-blue transition-colors hover:bg-un-blue/15"
+                            >
+                              {r.symbol}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </SectionCard>
+              );
+            })()}
           </div>
         </div>
       )}

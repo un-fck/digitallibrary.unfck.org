@@ -10,34 +10,58 @@ interface SearchRow {
   resource_type: string | null;
 }
 
+// A "symbol-like" query contains "/" or starts with a known UN body prefix.
+// For these, skip the expensive full-table title scan.
+const SYMBOL_RE = /\/|^(a|s|e|st|dp|unep|wfp|who|ilo|unhcr)\b/i;
+
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams.get("q")?.trim();
   if (!q || q.length < 2) return NextResponse.json([]);
 
+  const isSymbolQuery = SYMBOL_RE.test(q);
+
   try {
     const rows = await query<SearchRow>(
-      `SELECT
-         recid,
-         document_symbol,
-         title,
-         date_publication::text,
-         un_body,
-         resource_type
-       FROM digitallibrary.documents
-       WHERE deleted_at IS NULL
-         AND (
-           document_symbol ILIKE $1 || '%'
-           OR title ILIKE '%' || $1 || '%'
-           OR recid::text = $1
-         )
-       ORDER BY
-         CASE
-           WHEN document_symbol ILIKE $1 || '%' THEN 0
-           WHEN title ILIKE $1 || '%' THEN 1
-           ELSE 2
-         END,
-         date_publication DESC NULLS LAST
-       LIMIT 20`,
+      isSymbolQuery
+        ? `SELECT
+             recid,
+             document_symbol,
+             title,
+             date_publication::text,
+             un_body,
+             resource_type
+           FROM digitallibrary.documents
+           WHERE deleted_at IS NULL
+             AND (
+               document_symbol ILIKE $1 || '%'
+               OR recid::text = $1
+             )
+           ORDER BY
+             CASE WHEN document_symbol ILIKE $1 || '%' THEN 0 ELSE 1 END,
+             date_publication DESC NULLS LAST
+           LIMIT 20`
+        : `SELECT
+             recid,
+             document_symbol,
+             title,
+             date_publication::text,
+             un_body,
+             resource_type
+           FROM digitallibrary.documents
+           WHERE deleted_at IS NULL
+             AND (
+               document_symbol ILIKE $1 || '%'
+               OR title ILIKE '%' || $1 || '%'
+               OR recid::text = $1
+             )
+           ORDER BY
+             CASE
+               WHEN document_symbol ILIKE $1 || '%' THEN 0
+               WHEN title ILIKE $1 || '%' THEN 1
+               ELSE 2
+             END,
+             date_publication DESC NULLS LAST
+           LIMIT 20`,
       [q],
     );
 
