@@ -216,6 +216,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _connect(database_url: str) -> psycopg.Connection:
+    return psycopg.connect(ensure_ssl_cert(database_url), autocommit=False)
+
+
 def main() -> int:
     load_dotenv()
     args = parse_args()
@@ -225,62 +229,64 @@ def main() -> int:
         print("DATABASE_URL is required", file=sys.stderr)
         return 2
 
-    conn = psycopg.connect(ensure_ssl_cert(database_url), autocommit=False)
-
-    try:
+    # Read initial state with a short-lived connection to avoid idle timeouts
+    # on serverless Postgres (Supabase/Neon reap idle connections)
+    with _connect(database_url) as conn:
         state = read_state(conn)
         max_recid = get_max_recid(conn)
 
-        print(f"Current max recid in DB: {max_recid}")
-        print(f"Last incremental run: {state.get('last_run_at', 'never')}")
+    print(f"Current max recid in DB: {max_recid}")
+    print(f"Last incremental run: {state.get('last_run_at', 'never')}")
 
-        # Strategy: scan the frontier for new records beyond current max
-        # New records in UNDL get sequentially higher IDs
-        scan_start = max(max_recid - 200, 1)  # re-check a small overlap
-        scan_end = max_recid + FRONTIER_LOOKBACK
+    # Strategy: scan the frontier for new records beyond current max
+    # New records in UNDL get sequentially higher IDs
+    scan_start = max(max_recid - 200, 1)  # re-check a small overlap
+    scan_end = max_recid + FRONTIER_LOOKBACK
 
-        print(f"Scanning recid range: {scan_start} → {scan_end}")
+    print(f"Scanning recid range: {scan_start} → {scan_end}")
 
-        session = requests.Session()
-        # Use default python-requests UA — custom UAs trigger AWS WAF JS challenges
+    session = requests.Session()
+    # Use default python-requests UA — custom UAs trigger AWS WAF JS challenges
 
-        total_upserted = 0
-        chunk_start = scan_start
+    total_upserted = 0
+    chunk_start = scan_start
 
-        while chunk_start <= scan_end:
-            chunk_end = min(chunk_start + MAX_PER_REQUEST - 1, scan_end)
+    while chunk_start <= scan_end:
+        chunk_end = min(chunk_start + MAX_PER_REQUEST - 1, scan_end)
 
-            try:
-                records = fetch_and_parse_range(chunk_start, chunk_end, session)
-            except Exception as exc:
-                print(f"  Failed range {chunk_start}→{chunk_end}: {exc}", file=sys.stderr)
-                chunk_start = chunk_end + 1
-                time.sleep(CRAWL_DELAY)
-                continue
+        try:
+            records = fetch_and_parse_range(chunk_start, chunk_end, session)
+        except Exception as exc:
+            print(f"  Failed range {chunk_start}→{chunk_end}: {exc}", file=sys.stderr)
+            chunk_start = chunk_end + 1
+            time.sleep(CRAWL_DELAY)
+            continue
 
-            if records and not args.dry_run:
+        if records and not args.dry_run:
+            with _connect(database_url) as conn:
                 with conn.cursor() as cur:
                     for rec in records:
                         cur.execute(UPSERT_SQL, prepare_row(rec))
                 conn.commit()
-                total_upserted += len(records)
+            total_upserted += len(records)
 
-                # Extend scan if we found records near the frontier
-                new_max = max(r["recid"] for r in records)
-                if new_max >= scan_end - MAX_PER_REQUEST:
-                    scan_end = new_max + FRONTIER_LOOKBACK
-                    print(f"  Extended scan to {scan_end} (found records near frontier)")
-            elif records and args.dry_run:
-                total_upserted += len(records)
+            # Extend scan if we found records near the frontier
+            new_max = max(r["recid"] for r in records)
+            if new_max >= scan_end - MAX_PER_REQUEST:
+                scan_end = new_max + FRONTIER_LOOKBACK
+                print(f"  Extended scan to {scan_end} (found records near frontier)")
+        elif records and args.dry_run:
+            total_upserted += len(records)
 
-            if records:
-                print(f"  recid {chunk_start}→{chunk_end}: {len(records)} records")
+        if records:
+            print(f"  recid {chunk_start}→{chunk_end}: {len(records)} records")
 
-            chunk_start = chunk_end + 1
-            time.sleep(CRAWL_DELAY)
+        chunk_start = chunk_end + 1
+        time.sleep(CRAWL_DELAY)
 
-        # Save state
-        if not args.dry_run:
+    # Save state
+    if not args.dry_run:
+        with _connect(database_url) as conn:
             new_max = get_max_recid(conn)
             write_state(conn, {
                 "last_run_at": _utc_now(),
@@ -289,11 +295,8 @@ def main() -> int:
                 "scan_range": [scan_start, scan_end],
             })
 
-        print(f"\nDone. {'Parsed' if args.dry_run else 'Upserted'}: {total_upserted}")
-        return 0
-
-    finally:
-        conn.close()
+    print(f"\nDone. {'Parsed' if args.dry_run else 'Upserted'}: {total_upserted}")
+    return 0
 
 
 if __name__ == "__main__":
