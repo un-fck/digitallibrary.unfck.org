@@ -158,6 +158,10 @@ def fetch_marcxml_range(start: int, end: int, session: requests.Session) -> list
         try:
             resp = session.get(url, timeout=120)
             resp.raise_for_status()
+            if resp.status_code == 202 or not resp.text.strip():
+                raise requests.RequestException(
+                    f"Empty/202 response (WAF challenge?), status={resp.status_code}"
+                )
             # Force UTF-8 — server may not declare charset, causing
             # requests to default to ISO-8859-1 and mangle non-ASCII text.
             resp.encoding = "utf-8"
@@ -238,7 +242,7 @@ def main() -> int:
         print(f"Scanning recid range: {scan_start} → {scan_end}")
 
         session = requests.Session()
-        session.headers["User-Agent"] = "Mozilla/5.0 (compatible; UNDL-sync/1.0)"
+        # Use default python-requests UA — custom UAs trigger AWS WAF JS challenges
 
         total_upserted = 0
         chunk_start = scan_start
