@@ -38,27 +38,32 @@ export async function GET(req: NextRequest) {
   const s = req.nextUrl.searchParams.get("s")?.trim();
   if (!s) return NextResponse.json({ error: "Missing symbol" }, { status: 400 });
 
-  const rows = await query<DocumentDetailRow>(
-    `SELECT
-       recid, document_symbol, symbol_body, symbol_session, symbol_committee,
-       title, title_statement,
-       date_publication::text, date_text, publisher, pub_place, physical_desc,
-       doc_class_code, doc_class_desc,
-       languages, subjects, corporate_authors, un_body, un_committee,
-       notes, summary, files, collections,
-       resource_type, resource_subtype, vote_summary,
-       agenda_items, related_documents,
-       marcxml, harvested_at::text
-     FROM digitallibrary.documents
-     WHERE document_symbol ILIKE $1 AND deleted_at IS NULL
-     ORDER BY date_publication DESC NULLS LAST
-     LIMIT 1`,
-    [s],
-  );
+  try {
+    const rows = await query<DocumentDetailRow>(
+      `SELECT
+         recid, document_symbol, symbol_body, symbol_session, symbol_committee,
+         title, title_statement,
+         date_publication::text, date_text, publisher, pub_place, physical_desc,
+         doc_class_code, doc_class_desc,
+         languages, subjects, corporate_authors, un_body, un_committee,
+         notes, summary, files, collections,
+         resource_type, resource_subtype, vote_summary,
+         agenda_items, related_documents,
+         marcxml, harvested_at::text
+       FROM digitallibrary.documents
+       WHERE document_symbol ILIKE $1 AND deleted_at IS NULL
+       ORDER BY date_publication DESC NULLS LAST
+       LIMIT 1`,
+      [s],
+    );
 
-  if (!rows[0]) {
-    return NextResponse.json({ error: "Document not found" }, { status: 404 });
+    if (!rows[0]) {
+      return NextResponse.json({ error: "Document not found" }, { status: 404 });
+    }
+
+    return NextResponse.json(rows[0]);
+  } catch (err) {
+    console.error(`Failed to load document by symbol '${s}':`, err);
+    return NextResponse.json({ error: "Failed to load document" }, { status: 500 });
   }
-
-  return NextResponse.json(rows[0]);
 }
