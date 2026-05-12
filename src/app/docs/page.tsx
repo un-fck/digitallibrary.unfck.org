@@ -78,7 +78,7 @@ export default async function DocsPage() {
                   Make requests without credentials. Lower rate limits apply.
                 </p>
                 <CodeBlock
-                  code={`curl "https://digitallibrary.unfck.org/v1/search?q=A/RES"`}
+                  code={`curl "https://documents.unfck.org/v1/search?q=A/RES"`}
                   codeClassName="whitespace-pre-wrap break-all"
                 />
               </div>
@@ -91,7 +91,7 @@ export default async function DocsPage() {
                   Pass your key via <code className="font-mono text-xs bg-gray-100 px-1 rounded">Authorization</code> header or <code className="font-mono text-xs bg-gray-100 px-1 rounded">?api_key=</code> param.
                 </p>
                 <CodeBlock
-                  code={`curl -H "Authorization: Bearer undl_live_..." \\\n  "https://digitallibrary.unfck.org/v1/search?q=A/RES"`}
+                  code={`curl -H "Authorization: Bearer undl_live_..." \\\n  "https://documents.unfck.org/v1/search?q=A/RES"`}
                   codeClassName="whitespace-pre-wrap break-all"
                 />
               </div>
@@ -149,13 +149,13 @@ export default async function DocsPage() {
                 <p className="mb-3 text-xs font-semibold text-gray-500">curl</p>
                 <CodeBlock
                   code={`# Search
-curl "https://digitallibrary.unfck.org\\
+curl "https://documents.unfck.org\\
   /v1/search?q=climate"
 
 # With API key
 curl \\
   -H "Authorization: Bearer KEY" \\
-  "https://digitallibrary.unfck.org\\
+  "https://documents.unfck.org\\
   /v1/search?q=climate"`}
                   codeClassName="whitespace-pre"
                 />
@@ -166,7 +166,7 @@ curl \\
                 <CodeBlock
                   code={`import httpx
 
-BASE = "https://digitallibrary.unfck.org"
+BASE = "https://documents.unfck.org"
 
 r = httpx.get(
   f"{BASE}/v1/search",
@@ -184,7 +184,7 @@ docs = r.json()["results"]`}
                 <p className="mb-3 text-xs font-semibold text-gray-500">JavaScript</p>
                 <CodeBlock
                   code={`const BASE =
-  "https://digitallibrary.unfck.org";
+  "https://documents.unfck.org";
 
 const res = await fetch(
   \`\${BASE}/v1/search?q=climate\`,

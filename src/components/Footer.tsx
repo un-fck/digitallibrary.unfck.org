@@ -23,7 +23,7 @@ export function Footer() {
             API Docs
           </Link>
           <a
-            href="https://github.com/unfck-org/digitallibrary"
+            href="https://github.com/unfck-org/documents.unfck.org"
             target="_blank"
             rel="noopener noreferrer"
             className="transition-colors hover:text-gray-600"

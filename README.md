@@ -1,4 +1,4 @@
-# digitallibrary.unfck.org
+# documents.unfck.org
 
 Next.js app + FastAPI backend for exploring UN Digital Library metadata, backed by PostgreSQL and synced from the UN Digital Library search API.
 
@@ -42,10 +42,10 @@ Pass your key via header or query param:
 
 ```bash
 curl -H "Authorization: Bearer undl_live_xxxx" \
-  https://digitallibrary.unfck.org/v1/documents?q=A/RES/78
+  https://documents.unfck.org/v1/documents?q=A/RES/78
 
 # or
-curl "https://digitallibrary.unfck.org/v1/search?q=climate+change&api_key=undl_live_xxxx"
+curl "https://documents.unfck.org/v1/search?q=climate+change&api_key=undl_live_xxxx"
 ```
 
 ### Rate limits

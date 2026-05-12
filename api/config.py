@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_user: str = ""
     smtp_pass: str = ""
-    smtp_from: str = "noreply@digitallibrary.unfck.org"
+    smtp_from: str = "noreply@documents.unfck.org"
 
     # Public URL for verification links
     public_url: str = "http://localhost:3000"
