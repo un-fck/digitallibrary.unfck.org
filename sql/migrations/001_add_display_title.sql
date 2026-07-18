@@ -1,7 +1,7 @@
 -- Live migration: add title_other (MARC 239$a), symbol_normalized, display_title.
 -- Run once against an existing digitallibrary.documents:
---   psql "$DATABASE_URL" -f sql/add_display_title.sql
--- The from-scratch definitions live in sql/documents_tables.sql (keep in sync).
+--   psql "$DATABASE_URL" -f sql/migrations/001_add_display_title.sql
+-- The from-scratch definitions live in sql/schema/documents_tables.sql (keep in sync).
 --
 -- Ordering matters: add + backfill title_other FIRST, then add the two generated
 -- columns in ONE statement so the table is rewritten only once and display_title

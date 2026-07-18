@@ -1,5 +1,5 @@
 -- UN Digital Library: MARC-native document schema
--- Run: psql "$DATABASE_URL" -f sql/documents_tables.sql
+-- Run: psql "$DATABASE_URL" -f sql/schema/documents_tables.sql
 -- Prereqs:
 --   - Schema "digitallibrary" must exist
 
