@@ -12,10 +12,37 @@ CREATE TABLE digitallibrary.documents (
   symbol_body        TEXT,                           -- MARC 191$b  e.g. "A/"
   symbol_session     TEXT,                           -- MARC 191$c  e.g. "78"
   symbol_committee   TEXT,                           -- MARC 191$d  e.g. "A/C.3/"
+  -- Canonical join key: whitespace-stripped, upper-cased document_symbol.
+  -- UNDL is inconsistent about the space before "(YYYY)" (e.g. "S/RES/2713 (2023)"
+  -- vs "S/RES/270(1969)"); consumers store symbols without it. Removing whitespace
+  -- and upper-casing reconciles the two without collapsing distinct symbols
+  -- (separators kept, so "A/RES/70/1" and "A/RES/7/01" stay distinct).
+  symbol_normalized  TEXT GENERATED ALWAYS AS (
+    upper(regexp_replace(document_symbol, '[[:space:]]', '', 'g'))
+  ) STORED,
 
   -- Title
   title              TEXT,                           -- MARC 245$a + $b
+  title_other        TEXT,                           -- MARC 239$a  (descriptive "other title", verbatim)
   title_statement    TEXT,                           -- MARC 245$c  (responsibility)
+
+  -- Derived display title (generated): prefer a descriptive 245 title (with the
+  -- cataloguing " resolution"/" decision" suffix and trailing "." stripped); fall
+  -- back to the 239 "other title" when 245 is a generic form ("Resolution N (year)",
+  -- "Statement", "Decision N"); else whatever 245 we have. Immutable, so STORED and
+  -- auto-backfilled on ADD COLUMN. Apps may further trim for display (e.g. PRST item).
+  display_title      TEXT GENERATED ALWAYS AS (
+    CASE
+      WHEN title IS NOT NULL AND title <> ''
+           AND title !~* '^(resolution|decision|statement)([[:space:]]|$)'
+        THEN regexp_replace(
+               regexp_replace(title, '[[:space:]]+(resolution|decision)$', '', 'i'),
+               '\.$', '')
+      WHEN title_other IS NOT NULL AND title_other <> ''
+        THEN title_other
+      ELSE NULLIF(title, '')
+    END
+  ) STORED,
 
   -- Dates
   date_publication   DATE,                           -- MARC 269$a  (ISO date)
@@ -70,6 +97,7 @@ CREATE TABLE digitallibrary.documents (
 
 -- B-tree indexes for common lookups
 CREATE INDEX idx_doc_symbol        ON digitallibrary.documents (document_symbol);
+CREATE INDEX idx_doc_symbol_norm   ON digitallibrary.documents (symbol_normalized);
 CREATE INDEX idx_doc_date          ON digitallibrary.documents (date_publication DESC NULLS LAST);
 CREATE INDEX idx_doc_body          ON digitallibrary.documents (un_body);
 CREATE INDEX idx_doc_resource_type ON digitallibrary.documents (resource_type);

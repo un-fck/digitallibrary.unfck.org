@@ -101,6 +101,12 @@ def parse_record(record_xml: str) -> dict | None:
         "symbol_session": _subfield_first(rec, "191", "c", ns),
         "symbol_committee": _subfield_first(rec, "191", "d", ns),
         "title": title,
+        # 239$a: "other title" — the descriptive title UNDL populates when 245
+        # is a non-descriptive form (Security Council resolutions/PRSTs get the
+        # "... [on <subject>]" phrase here, GA/ECOSOC/HRC usually have none).
+        # Stored verbatim; the display_title generated column decides when to
+        # prefer it over 245.
+        "title_other": _subfield_first(rec, "239", "a", ns),
         "title_statement": _subfield_first(rec, "245", "c", ns),
         "date_publication": date_pub,
         "date_text": _subfield_first(rec, "260", "c", ns),

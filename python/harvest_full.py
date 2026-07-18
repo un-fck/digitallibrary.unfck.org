@@ -51,7 +51,7 @@ ID_BLOCKS = [
 UPSERT_SQL = """
 INSERT INTO digitallibrary.documents (
   recid, document_symbol, symbol_body, symbol_session, symbol_committee,
-  title, title_statement, date_publication, date_text, publisher, pub_place,
+  title, title_other, title_statement, date_publication, date_text, publisher, pub_place,
   physical_desc, doc_class_code, doc_class_desc, languages, subjects,
   corporate_authors, un_body, un_committee, notes, summary, files,
   collections, resource_type, resource_subtype, vote_summary,
@@ -59,7 +59,7 @@ INSERT INTO digitallibrary.documents (
 )
 VALUES (
   %(recid)s, %(document_symbol)s, %(symbol_body)s, %(symbol_session)s,
-  %(symbol_committee)s, %(title)s, %(title_statement)s, %(date_publication)s,
+  %(symbol_committee)s, %(title)s, %(title_other)s, %(title_statement)s, %(date_publication)s,
   %(date_text)s, %(publisher)s, %(pub_place)s, %(physical_desc)s,
   %(doc_class_code)s, %(doc_class_desc)s, %(languages)s, %(subjects)s,
   %(corporate_authors)s::jsonb, %(un_body)s, %(un_committee)s, %(notes)s,
@@ -73,6 +73,7 @@ ON CONFLICT (recid) DO UPDATE SET
   symbol_session = EXCLUDED.symbol_session,
   symbol_committee = EXCLUDED.symbol_committee,
   title = EXCLUDED.title,
+  title_other = EXCLUDED.title_other,
   title_statement = EXCLUDED.title_statement,
   date_publication = EXCLUDED.date_publication,
   date_text = EXCLUDED.date_text,
