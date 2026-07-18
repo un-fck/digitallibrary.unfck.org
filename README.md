@@ -101,15 +101,21 @@ uv sync
 3. Apply DB setup SQL (admin):
 
 ```bash
-psql "$DATABASE_URL" -f sql/auth_tables.sql
-psql "$DATABASE_URL" -f sql/create_digitallibrary_user.sql
-psql "$DATABASE_URL" -f sql/api_tables.sql
+psql "$DATABASE_URL" -f sql/schema/auth_tables.sql
+psql "$DATABASE_URL" -f sql/schema/db_user.sql
+psql "$DATABASE_URL" -f sql/schema/api_tables.sql
 ```
 
 4. Apply document schema:
 
 ```bash
-psql "$DATABASE_URL" -f sql/documents_tables.sql
+psql "$DATABASE_URL" -f sql/schema/documents_tables.sql
+```
+
+Then apply any incremental migrations in order:
+
+```bash
+for f in sql/migrations/*.sql; do psql "$DATABASE_URL" -f "$f"; done
 ```
 
 5. Run full harvest (or incremental):
@@ -160,9 +166,12 @@ pnpm dev
 
 ### Database
 
-- `sql/documents_tables.sql`: document metadata schema
-- `sql/auth_tables.sql`: users, magic tokens, allowed domains
-- `sql/api_tables.sql`: API users, keys, verification tokens, usage log
+- `sql/schema/`: re-runnable from-scratch definitions
+  - `documents_tables.sql`: document metadata schema
+  - `auth_tables.sql`: users, magic tokens, allowed domains
+  - `api_tables.sql`: API users, keys, verification tokens, usage log
+  - `db_user.sql`, `rate_limit_table.sql`
+- `sql/migrations/`: numbered incremental migrations, applied in order on top of the schema
 
 ## Documentation
 

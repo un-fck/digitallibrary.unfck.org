@@ -19,7 +19,7 @@ the search API with `recid` range slicing and MARCXML output.
 ```bash
 # Apply schema first
 psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
-psql "$DATABASE_URL" -f sql/documents_tables.sql
+psql "$DATABASE_URL" -f sql/schema/documents_tables.sql
 
 # Start the harvest (~8 hours with crawl-delay)
 DATABASE_URL="$DATABASE_URL" \
