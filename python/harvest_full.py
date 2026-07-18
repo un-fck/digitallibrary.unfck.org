@@ -42,10 +42,9 @@ MAX_PER_REQUEST = 200
 DEFAULT_BATCH_SIZE = 1000
 STATE_PATH = Path("python/.harvest_state.json")
 
-# Two dense ID blocks (discovered via investigation)
+# TODO: restore to (1, 4_120_000) after backfilling the gap
 ID_BLOCKS = [
-    (1, 865_000),
-    (3_797_000, 4_103_000),
+    (865_000, 3_797_000),
 ]
 
 UPSERT_SQL = """
@@ -333,7 +332,7 @@ def main() -> int:
                         break
 
                     chunk_end = min(chunk_start + args.chunk_size - 1, block_end)
-                    progress.update(task, description=f"Block {block_index + 1}/2  recid {chunk_start}→{chunk_end}")
+                    progress.update(task, description=f"Block {block_index + 1}/{len(ID_BLOCKS)}  recid {chunk_start}→{chunk_end}")
 
                     try:
                         records = fetch_and_parse(chunk_start, chunk_end, session)
@@ -355,21 +354,23 @@ def main() -> int:
 
                     if args.dry_run:
                         total_parsed += len(records)
-                    elif len(batch) >= args.batch_size:
-                        try:
-                            written = upsert_batch(conn, batch)
-                            total_upserted += written
-                        except Exception as exc:
-                            conn.rollback()
-                            progress.stop()
-                            console.print(f"\n[bold red]DB ERROR — aborting:[/bold red] {exc}")
-                            console.print("[yellow]Fix the issue and re-run with --resume.[/yellow]")
-                            save_state(state)
-                            return 1
-                        batch = []
+                    else:
+                        # Flush every chunk so checkpoints stay current through
+                        # sparse regions. The crawl delay dominates anyway, so
+                        # committing 0–200 rows per chunk is essentially free.
+                        if batch:
+                            try:
+                                written = upsert_batch(conn, batch)
+                                total_upserted += written
+                            except Exception as exc:
+                                conn.rollback()
+                                progress.stop()
+                                console.print(f"\n[bold red]DB ERROR — aborting:[/bold red] {exc}")
+                                console.print("[yellow]Fix the issue and re-run with --resume.[/yellow]")
+                                save_state(state)
+                                return 1
+                            batch = []
 
-                        # Only checkpoint after successful DB commit
-                        # so resume re-fetches any uncommitted records
                         state.update({
                             "block_index": block_index,
                             "last_completed_end": chunk_end,
