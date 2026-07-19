@@ -111,6 +111,11 @@ def _roman_value(s: str) -> int | None:
 def _alpha_value(s: str) -> int | None:
     if not re.fullmatch(r"[a-z]+", s):
         return None
+    # UN subparagraph lettering continues past (z) by DOUBLING the glyph:
+    # (aa),(bb),..,(zz) are items 27..52 -- NOT base-26 ('aa'=27,'bb'=28,..).
+    # Triples ('aaa') would be 53.. by the same convention. Single letters are 1..26.
+    if len(s) >= 2 and len(set(s)) == 1:
+        return (len(s) - 1) * 26 + (ord(s[0]) - ord("a") + 1)
     val = 0
     for ch in s:
         val = val * 26 + (ord(ch) - ord("a") + 1)
@@ -360,6 +365,18 @@ def analyze(symbol: str, raw: list[dict], parsed: dict | None) -> dict:
             lv = el.get("level")
             if not isinstance(lv, int):
                 lv = {"num": 1, "alpha": 2, "roman": 3}.get(kind, 1)
+            # RESCUED operative: source dropped its number/label. It carries no
+            # prefix (ordv is None); it CONSUMES one ordinal slot in the open run so
+            # the following labeled item is not seen as a jump. Badge 'inferred'
+            # instead of the 'seq-gap' that the missing number would otherwise cause.
+            if el.get("inferred_operative"):
+                anoms.append(("inferred",
+                              "operative inferred here (source dropped its number/label)"))
+                prev = expected.get(lv)
+                if prev is not None:
+                    expected[lv] = (prev[0], prev[1] + 1)
+                prev_level = lv
+                continue
             if ordv is not None:
                 # a shallower/equal item ends any deeper open runs
                 for deeper in [L for L in expected if L > lv]:
@@ -375,7 +392,14 @@ def analyze(symbol: str, raw: list[dict], parsed: dict | None) -> dict:
                                   f"expected {prev[1]}, got {ordv}"))
                 expected[lv] = (kind, ordv + 1)
             if isinstance(el.get("level"), int):
-                if prev_level is not None and lv > prev_level + 1:
+                # A deeper level that is the FIRST item of a fresh sub-run (ordv==1,
+                # e.g. an operative whose first sub-item is '(i)' or '(a)') is normal
+                # nesting, not a defect -- UN drafting routinely opens a Roman/alpha
+                # sub-run directly under a numbered operative, skipping the notional
+                # middle level. Only flag a jump into a deeper level that is NOT a
+                # fresh-run start (ordv>1) -- that signals a genuine indentation slip.
+                fresh_run_start = ordv is None or ordv == 1
+                if prev_level is not None and lv > prev_level + 1 and not fresh_run_start:
                     level_jump = True
                     anoms.append(("level-jump", f"indentation level jumps {prev_level} -> {lv}"))
                 prev_level = lv

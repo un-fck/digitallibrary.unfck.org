@@ -45,6 +45,18 @@ from fulltext_common import ARCHIVE_ROOT, get_conn, sanitize_symbol
 PARSER_VERSION = "sem-v1"
 OUT_DIR = ARCHIVE_ROOT / "parsed_dev"
 
+# Opt-in source-defect rescue: when a resolution drops an operative NUMBER at
+# source (e.g. A/HRC/RES/19/1 omits '5.'/'6.'; S/RES/1528(2004) omits '(e)'-'(h)'),
+# an unlabeled clause that (a) sits inside a running operative sequence with a
+# CONFIRMED numbering gap ahead and (b) reads like an operative (finite lead verb
+# or a 'To <verb>' sub-item) is labeled operative with props.inferred_operative and
+# NO invented prefix. Default ON; recorded per element so it is auditable/reversible.
+RESCUE_INFERRED_OPERATIVE = True
+
+# 'To <lowercase-verb>' opens an infinitive operative sub-item (…(a) To observe,
+# (b) To liaise…); used by the rescue to recognise an unlabeled sibling sub-item.
+INFINITIVE_SUBITEM_RE = re.compile(r"^To\s+[a-z]")
+
 # ---------------------------------------------------------------------------
 # Vocabularies & patterns
 # ---------------------------------------------------------------------------
@@ -154,6 +166,19 @@ BODY_HEADING_STYLES = {"H1", "H2", "H3", "H4", "H23", "H1G", "H2G", "H3G", "H4G"
                        "HCh", "HChG", "HChM"}
 
 ROMAN_CHARS = set("ivxlcdm")
+
+# Annex that is really an annexed governance INSTRUMENT (terms of reference, rules
+# of procedure, statute, charter, ...) with a numbered-article structure gets
+# SCOPED operative labeling (its numbered paragraphs are the instrument's
+# operatives, tracked independently of the parent resolution). Plain annexes
+# (programmes of action, agendas, declarations, lists, schedules, tables) keep
+# paragraph_type=None -- their "operativeness" is not resolution-mandate operative
+# and is deferred (see run report). "Amendments to ..." annexes are diffs, not the
+# instrument, so they are excluded.
+ANNEX_INSTRUMENT_RE = re.compile(
+    r"\b(terms of reference|rules of procedure|statute|constitution|"
+    r"charter of|regulations of|mandate of the)\b", re.I)
+ANNEX_AMENDMENT_RE = re.compile(r"^\s*Amendments?\b", re.I)
 
 
 def _clean(text: str) -> str:
@@ -267,6 +292,93 @@ def build_logical_rows(raw_rows: list[dict], fmt: str) -> list[LRow]:
     return merged
 
 
+SUBRES_LETTER_RE = re.compile(r"^([A-Z])\.?$")   # bare "A" / "B." sub-resolution heading
+
+
+def _annex_scope_is_instrument(lrows: list[LRow], i: int) -> bool:
+    """True if the annex whose heading is lrows[i] is a scoped governance instrument.
+
+    Scans from the heading to the next annex/appendix/opening boundary (or end).
+    Triggers on EITHER: (a) the annex carries its own opening formula (an annexed
+    resolution/agreement with a preamble), OR (b) the annex title matches an
+    instrument keyword (terms of reference / rules of procedure / statute / ...),
+    it is NOT an 'Amendments to ...' diff, and it has >=2 numbered paragraphs.
+    """
+    n = len(lrows)
+    title_line = None
+    n_numbered = 0
+    has_opening = False
+    j = i + 1
+    while j < n:
+        cj = lrows[j].clean
+        if lrows[j].kind in ("empty", "section_break") or not cj:
+            j += 1
+            continue
+        if ANNEX_RE.match(cj):           # next annex/appendix -> end of this scope
+            break
+        if OPENING_RE.match(cj):
+            has_opening = True
+        if title_line is None:
+            title_line = cj
+        if OP_NUM_RE.match(cj):
+            n_numbered += 1
+        j += 1
+    if has_opening:
+        return True
+    if title_line and ANNEX_INSTRUMENT_RE.search(title_line) \
+            and not ANNEX_AMENDMENT_RE.match(title_line) and n_numbered >= 2:
+        return True
+    return False
+
+
+def detect_subres_blocks(lrows: list[LRow]) -> dict[int, dict]:
+    """Locate consolidated/omnibus sub-resolution boundaries (multi-text).
+
+    A consolidated resolution (e.g. A/RES/48/75 with sub-resolutions A..L) prints,
+    for each sub-resolution, a bare capital-letter heading ('A'), then optional
+    title line(s), then its OWN opening formula ('The General Assembly,'). We
+    segment ONLY when the letter heading is CONFIRMED by an opening formula that
+    follows within a short window -- so section headings inside a single resolution
+    ('I', 'A. Utilization ...' followed by '1. ...', never an opening) are never
+    mistaken for a new text.
+
+    Returns {lrow_index_of_letter: {'letter': str, 'title_idx': [lrow_index, ...]}}.
+    The title lines are the non-empty rows between the letter and the opening; they
+    are merged into ONE title element per block by the caller and skipped in the
+    normal stream (their positions are consumed by that title element).
+    """
+    n = len(lrows)
+    blocks: dict[int, dict] = {}
+    for i, lr in enumerate(lrows):
+        m = SUBRES_LETTER_RE.match(lr.clean)
+        if not m:
+            continue
+        title_idx: list[int] = []
+        seen_open = False
+        j = i + 1
+        steps = 0
+        while j < n and steps < 6:
+            cj = lrows[j].clean
+            if lrows[j].kind in ("empty", "section_break") or not cj:
+                j += 1
+                continue
+            if OPENING_RE.match(cj):
+                seen_open = True
+                break
+            # anything that is clearly not a sub-title stops the look-ahead
+            if (OP_NUM_RE.match(cj) or OP_PAREN_RE.match(cj) or ANNEX_RE.match(cj)
+                    or MEETING_RE.match(cj) or VOTE_RE.match(cj) or DIVIDER_RE.match(cj)
+                    or WP_FOOTNOTE_RE.match(cj) or SUBRES_LETTER_RE.match(cj)
+                    or TITLE_GA_NUM_RE.match(cj)):
+                break
+            title_idx.append(j)
+            j += 1
+            steps += 1
+        if seen_open:
+            blocks[i] = {"letter": m.group(1), "title_idx": title_idx}
+    return blocks
+
+
 # ---------------------------------------------------------------------------
 # Sub-paragraph level / (i) disambiguation
 # ---------------------------------------------------------------------------
@@ -287,12 +399,27 @@ class OpLevelTracker:
         self.last_alpha = None
         self.roman_active = False
 
-    def classify_paren(self, token: str) -> tuple[int, str]:
-        """Return (level, prefix) for a parenthetical marker token like 'a','i','iv','1'."""
+    def classify_paren(self, token: str, next_tok: str | None = None) -> tuple[int, str]:
+        """Return (level, prefix) for a parenthetical marker token like 'a','i','iv','1'.
+
+        `next_tok` is the following paren marker (if any); it disambiguates a single
+        '(i)' -- Roman nesting when '(ii)' follows, alpha continuation otherwise.
+        """
         tok = token.lower()
         prefix = f"({token})"
         if tok.isdigit():
             return 2, prefix  # numeric subpara -- treat as level 2 variant
+        # DOUBLED same-letter marker ('aa','bb',..,'zz'): the UN alpha convention
+        # for subparagraphs continuing past (z). These are ALWAYS level-2 alpha --
+        # NOT Roman -- even when the letter happens to be a Roman glyph ('cc','dd',
+        # 'ii','ll','mm' etc.). The only exception is a genuine Roman sub-sub run
+        # already open (e.g. '(i)(ii)') where '(ii)' is Roman: gated on roman_active.
+        if len(tok) == 2 and tok[0] == tok[1]:
+            if self.roman_active and all(ch in ROMAN_CHARS for ch in tok):
+                return 3, prefix
+            self.last_alpha = tok
+            self.roman_active = False
+            return 2, prefix
         # multi-char: roman if all roman chars, else treat as deeper alpha
         if len(tok) > 1:
             if all(ch in ROMAN_CHARS for ch in tok):
@@ -301,7 +428,15 @@ class OpLevelTracker:
             return 2, prefix
         # single char
         if tok == "i":
-            if self.last_alpha == "h":       # ... (g)(h)(i) alpha run
+            # '(i)' is ambiguous: the start of a Roman sub-sub run (i)(ii)(iii)…
+            # nested under an alpha item, OR alpha continuation of a flat (a)(b)…(i)
+            # list (incl. …(d),(i) when source dropped (e)-(h)). Disambiguate by the
+            # NEXT marker: '(ii)' => Roman nesting; otherwise, if an alpha run is
+            # open, alpha continuation.
+            if next_tok is not None and next_tok.lower() == "ii":
+                self.roman_active = True
+                return 3, prefix
+            if self.last_alpha is not None and not self.roman_active:
                 self.last_alpha = "i"
                 return 2, prefix
             self.roman_active = True         # start of (i)(ii)... roman run
@@ -448,6 +583,11 @@ def _footnote_text(raw_text: str) -> str:
 
 def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
     lrows = build_logical_rows(raw_rows, fmt)
+    subres = detect_subres_blocks(lrows)
+    # lrow indices whose positions are consumed by a block's merged title element
+    title_skip: set[int] = set()
+    for blk in subres.values():
+        title_skip.update(blk["title_idx"])
 
     elements: list[dict] = []
     dropped: list[dict] = []
@@ -459,6 +599,11 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
     text_index = 1
     seen_opening = False
     seen_title = False
+    pending_block_opening = False   # a sub-res boundary already bumped text_index;
+                                    # suppress the imminent opening's own bump
+    annex_scoped = False            # current annex/appendix is a scoped instrument
+                                    # (its numbered paras are labeled operative)
+    last_op_number = 0              # last top-level operative number seen (for rescue)
     op_tracker = OpLevelTracker()
 
     i = 0
@@ -467,6 +612,49 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
         lr = lrows[i]
         c = lr.clean
         kind = lr.kind
+
+        # 0. sub-res block title lines are emitted with their block's letter
+        # heading (below); skip them here so positions are consumed exactly once.
+        if i in title_skip:
+            i += 1
+            continue
+
+        # 0b. sub-resolution block boundary (letter heading + title + opening ahead)
+        if i in subres:
+            blk = subres[i]
+            if seen_opening:
+                text_index += 1
+                pending_block_opening = True
+            op_tracker.reset()
+            op_tracker.top()
+            section = "main"
+            annex_index = 0
+            state = "blockhead"
+            elements.append(_new_element(lr, type="heading", section="main",
+                                         heading_level=1, text=c,
+                                         text_index=text_index, subtype="subres"))
+            tidx = blk["title_idx"]
+            if tidx:
+                t_positions: list[int] = []
+                t_texts: list[str] = []
+                t_hyper: list = []
+                for k in tidx:
+                    t_positions.extend(lrows[k].positions)
+                    if lrows[k].clean:
+                        t_texts.append(lrows[k].clean)
+                    t_hyper.extend(lrows[k].hyperlinks)
+                title_el = {
+                    "positions": t_positions, "type": "title", "section": "main",
+                    "paragraph_type": None, "level": None, "prefix": None,
+                    "heading_level": None, "text": " ".join(t_texts),
+                    "lead_verb": None, "hyperlinks": t_hyper, "note_ids": [],
+                }
+                if text_index != 1:
+                    title_el["text_index"] = text_index
+                elements.append(title_el)
+                seen_title = True
+            i += 1
+            continue
 
         # 1. empties & section breaks -----------------------------------------
         if kind == "empty" or (kind != "footnote" and not c):
@@ -550,11 +738,14 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
 
         # 6. opening formula --------------------------------------------------
         if OPENING_RE.match(c):
-            if seen_opening:
+            if seen_opening and not pending_block_opening:
+                # repeated opening with NO preceding letter heading (e.g. an ECOSOC
+                # resolution that recommends a GA text): still a distinct text block.
                 text_index += 1
                 op_tracker.reset()
                 section = "main"
                 annex_index = 0
+            pending_block_opening = False
             seen_opening = True
             state = "preamble"
             elements.append(_new_element(lr, type="opening", section=section,
@@ -572,14 +763,33 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
             else:
                 section = "appendix"
             op_tracker.top()
+            op_tracker.reset()
+            annex_scoped = _annex_scope_is_instrument(lrows, i)
             el = _new_element(lr, type="heading", section=section, heading_level=1,
                               text=c, text_index=text_index)
             if section == "annex":
                 el["annex_index"] = annex_index
+            if annex_scoped:
+                el["subtype"] = "instrument"
             elements.append(el)
-            state = "preamble"  # annex may restart with its own preamble/operatives
+            # 'annextitle' captures the instrument/annex title line as a title
+            # element; then the (scoped) preamble/operative machine runs.
+            state = "annextitle"
             i += 1
             continue
+
+        # 7b. annex title line (first content line after an annex heading) ------
+        if state == "annextitle":
+            # only a plain title line; structural rows fall through to be parsed
+            if not (OPENING_RE.match(c) or OP_NUM_RE.match(c) or OP_PAREN_RE.match(c)
+                    or ANNEX_RE.match(c) or _looks_like_heading(c, lr, "operative")
+                    or MEETING_RE.match(c) or DIVIDER_RE.match(c)):
+                elements.append(_new_element(lr, type="title", section=section,
+                                             text=c, text_index=text_index))
+                state = "preamble"
+                i += 1
+                continue
+            state = "preamble"  # no distinct title; reparse this row below
 
         # 8. titles (front region) --------------------------------------------
         if state == "front" or not seen_opening:
@@ -636,13 +846,16 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
         # Annex/appendix bodies are frequently numbered too (programmes of action,
         # agendas), but those are backmatter, not resolution operatives -- so we
         # keep their prefix/level yet set paragraph_type=None there.
+        # label operatives in the main section AND inside a scoped instrument annex
         in_main = section == "main"
+        label_ops = in_main or annex_scoped
         m_num = OP_NUM_RE.match(c)
         if m_num and not TITLE_GA_NUM_RE.match(c):
             op_tracker.top()
+            last_op_number = int(m_num.group(1))
             elements.append(_new_element(
                 lr, type="paragraph", section=section,
-                paragraph_type="operative" if in_main else None,
+                paragraph_type="operative" if label_ops else None,
                 level=1, prefix=f"{m_num.group(1)}.", text=m_num.group(2).strip(),
                 lead_verb=_op_lead_verb(m_num.group(2)), text_index=text_index))
             state = "operative"
@@ -661,7 +874,7 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
                     op_tracker.top()
                     elements.append(_new_element(
                         lr, type="paragraph", section=section,
-                        paragraph_type="operative" if in_main else None,
+                        paragraph_type="operative" if label_ops else None,
                         level=1, prefix=f"{m_loose.group(1)}.",
                         text=m_loose.group(2).strip(),
                         lead_verb=_op_lead_verb(m_loose.group(2)), text_index=text_index))
@@ -670,7 +883,8 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
 
         m_par = OP_PAREN_RE.match(c)
         if m_par and state in ("operative", "preamble"):
-            level, prefix = op_tracker.classify_paren(m_par.group(1))
+            level, prefix = op_tracker.classify_paren(
+                m_par.group(1), next_tok=_next_paren_token(lrows, i + 1))
             # A parenthetical in the PREAMBLE is a sub-item of the preceding
             # preambular clause (often introduced by a clause ending in ':'),
             # NOT the first operative -- operatives are introduced by "1." So we
@@ -679,7 +893,7 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
             base = "operative" if state == "operative" else "preambular"
             elements.append(_new_element(
                 lr, type="paragraph", section=section,
-                paragraph_type=base if in_main else None,
+                paragraph_type=base if label_ops else None,
                 level=level, prefix=prefix, text=m_par.group(2).strip(),
                 text_index=text_index))
             i += 1
@@ -694,7 +908,7 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
             continue
 
         # 13. frontmatter residue (session/agenda/masthead lines) -------------
-        if state == "front":
+        if state in ("front", "blockhead"):
             # drop obvious page artifacts, keep informative masthead as frontmatter
             if RUNNING_HEADER_RE.match(c) or PAGE_NUM_RE.match(c):
                 for p in lr.positions:
@@ -718,7 +932,7 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
                 op_tracker.top()
                 elements.append(_new_element(
                     lr, type="paragraph", section=section,
-                    paragraph_type="operative" if section == "main" else None,
+                    paragraph_type="operative" if label_ops else None,
                     level=1, prefix=None, text=c, lead_verb=_op_lead_verb(c),
                     text_index=text_index))
                 state = "operative"
@@ -727,10 +941,42 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
             lead = lead_it or _lead_verb_from_text(c)
             elements.append(_new_element(
                 lr, type="paragraph", section=section,
-                paragraph_type="preambular" if section == "main" else None,
+                paragraph_type="preambular" if label_ops else None,
                 level=1, text=c, lead_verb=lead, text_index=text_index))
             i += 1
             continue
+
+        # 14b. OPT-IN source-defect rescue: an unlabeled operative whose NUMBER was
+        # dropped at source. Fires only inside a running operative sequence with a
+        # CONFIRMED numbering gap ahead, and only for clauses that read operative.
+        if (RESCUE_INFERRED_OPERATIVE and state == "operative" and label_ops
+                and not OP_NUM_RE.match(c) and not OP_PAREN_RE.match(c)
+                and not _looks_like_heading(c, lr, state)):
+            first = c.split(" ", 1)[0].strip(",.").lower()
+            in_alpha_run = op_tracker.last_alpha is not None and not op_tracker.roman_active
+            looks_op = first in OPERATIVE_LEAD_VERBS or INFINITIVE_SUBITEM_RE.match(c)
+            inferred = False
+            level = 1
+            if looks_op:
+                if in_alpha_run:
+                    nxt = _next_number_ahead(lrows, i + 1, paren=True)
+                    cur_ord = _alpha_ord(op_tracker.last_alpha) or 0
+                    if nxt is not None and nxt > cur_ord + 1:
+                        inferred, level = True, 2
+                else:
+                    nxt = _next_number_ahead(lrows, i + 1, paren=False)
+                    if nxt is not None and nxt > last_op_number + 1:
+                        inferred, level = True, 1
+            if inferred:
+                el = _new_element(
+                    lr, type="paragraph", section=section,
+                    paragraph_type="operative", level=level, prefix=None, text=c,
+                    lead_verb=_op_lead_verb(c) if level == 1 else None,
+                    text_index=text_index)
+                el["inferred_operative"] = True
+                elements.append(el)
+                i += 1
+                continue
 
         # 15. operative continuation / tail body / annex prose / PRST body ----
         if state in ("operative", "tail"):
@@ -769,6 +1015,72 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
         "issues": issues,
     }
     return result
+
+
+def _alpha_ord(s: str) -> int | None:
+    """Ordinal of a subparagraph letter, honoring the UN doubling convention past z
+    ('aa'=27,'bb'=28,..). Mirrors fulltext_review._alpha_value so gap arithmetic
+    agrees on both sides."""
+    s = s.lower()
+    if not s.isalpha():
+        return None
+    if len(s) >= 2 and len(set(s)) == 1:
+        return (len(s) - 1) * 26 + (ord(s[0]) - ord("a") + 1)
+    if len(s) == 1:
+        return ord(s) - ord("a") + 1
+    return None
+
+
+def _next_number_ahead(lrows: list[LRow], i: int, paren: bool) -> int | None:
+    """Ordinal of the next labeled operative item ahead of lrows[i], or None.
+
+    paren=False -> next top-level 'N.' number; paren=True -> next '(letter)' alpha
+    ordinal. Scans a bounded window and stops at a hard structural boundary so the
+    look-ahead never crosses into another text/annex/preamble.
+    """
+    n = len(lrows)
+    j = i
+    steps = 0
+    while j < n and steps < 30:
+        cj = lrows[j].clean
+        if not cj or lrows[j].kind in ("empty", "section_break", "footnote"):
+            j += 1
+            continue
+        if (OPENING_RE.match(cj) or ANNEX_RE.match(cj) or MEETING_RE.match(cj)
+                or VOTE_RE.match(cj) or VOTE_TALLY_RE.match(cj) or DIVIDER_RE.match(cj)):
+            return None
+        if not paren:
+            m = OP_NUM_RE.match(cj)
+            if m and not TITLE_GA_NUM_RE.match(cj):
+                return int(m.group(1))
+        else:
+            m = OP_PAREN_RE.match(cj)
+            if m:
+                return _alpha_ord(m.group(1))
+        j += 1
+        steps += 1
+    return None
+
+
+def _next_paren_token(lrows: list[LRow], i: int) -> str | None:
+    """The next '(marker)' token at/after lrows[i] within a bounded window, or None.
+    Stops at a hard structural boundary so it never crosses into another run."""
+    n = len(lrows)
+    j, steps = i, 0
+    while j < n and steps < 20:
+        cj = lrows[j].clean
+        if not cj or lrows[j].kind in ("empty", "section_break", "footnote"):
+            j += 1
+            continue
+        if (OPENING_RE.match(cj) or ANNEX_RE.match(cj) or MEETING_RE.match(cj)
+                or VOTE_RE.match(cj) or DIVIDER_RE.match(cj) or OP_NUM_RE.match(cj)):
+            return None
+        m = OP_PAREN_RE.match(cj)
+        if m:
+            return m.group(1)
+        j += 1
+        steps += 1
+    return None
 
 
 def _op_lead_verb(rest: str) -> str | None:
@@ -811,8 +1123,12 @@ def _looks_like_heading(c: str, lr: LRow, state: str) -> bool:
     # or numbered section heading within the operative part)
     if re.match(r"^[IVXLC]{1,4}\.?$", c) or re.match(r"^[A-Z]\.?$", c):
         return True
-    # "A. Title" / "I. Title" style section heading
-    if re.match(r"^([IVXLC]{1,4}|[A-Z])\.\s+[A-Z]", c) and lr.props.get("bold"):
+    # "A. Title" / "I. Title" style section heading -- accept when bold OR when the
+    # paragraph carries an explicit heading style (H23 etc.), so instrument-annex
+    # section headers ('A. Mandate', 'B. Objectives') that are not bold-flagged are
+    # still recognised and do not leak into preambular/operative labeling.
+    if re.match(r"^([IVXLC]{1,4}|[A-Z])\.\s+[A-Z]", c) and (
+            lr.props.get("bold") or lr.style in BODY_HEADING_STYLES):
         return True
     # explicit heading style, short, and centered/bold
     if lr.style in BODY_HEADING_STYLES and (lr.props.get("bold") or lr.props.get("alignment") == "center"):
