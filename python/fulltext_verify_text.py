@@ -17,12 +17,18 @@ that are artifacts of the comparison, not real loss:
 
   2. TOKENIZER RUN-JOINS. python-docx concatenates the runs of a paragraph; where a
      word wraps across a soft line break (or a heading is laid out across lines) two
-     adjacent words can fuse into one docx token ("Commissioner"+"for" ->
-     "commissionerfor", "6th"+"meeting" -> "meeting6", "oceans"+"and" ->
-     "oceansand"). The parser, working from the raw extraction, keeps them as
-     separate correctly-spaced tokens. Such a fused token is benign iff it splits
-     entirely into tokens that ARE present in the parsed output. This means the
-     parser is *more* faithful than the docx tokenizer, so no content was lost.
+     adjacent tokens fuse into one docx token ("Commissioner"+"for" ->
+     "commissionerfor", "6th"+"meeting" -> "meeting6", footnote marker "a"+"See" ->
+     "asee", "1"+"situation" -> "1situation"). The parser, working from the raw
+     extraction, keeps them separate and correctly spaced. A fused token is benign
+     iff it SEGMENTS entirely into tokens that are all present in the parsed output,
+     with at least one segment of length >=3 (the content piece) -- i.e. the parser
+     is *more* faithful than the docx tokenizer and no content was lost.
+
+Two further nuisance classes are excluded before the loss test: bare numbers and
+<=2-char tokens (numbering/markers/function-word fragments -- never content), and
+tokens that are part of the document's OWN symbol (the "PRST"/"RES" of a running
+header the parser correctly drops as a page artifact).
 
 Hyphenation is normalised away on BOTH sides first (hyphens / soft hyphens /
 apostrophes stripped) so "Al-Shabaab", "post-traumatic", "non-refoulement" never
@@ -62,6 +68,7 @@ import re
 import sys
 import zipfile
 from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 
 import lxml.etree as ET
@@ -80,9 +87,6 @@ _TOKEN = re.compile(r"[a-z0-9]+")
 
 # Benign pattern 1: vote tally labels -- structural JSON keys, not element text.
 VOTE_LABEL_TOKENS = {"favour", "against", "abstaining", "voting", "nonvoting", "absent"}
-
-# Run-join split: minimum length of each fused piece to accept the split.
-_MIN_PIECE = 2
 
 
 def words(text: str | None) -> Counter:
@@ -141,41 +145,51 @@ def parsed_words(doc: dict) -> tuple[Counter, bool]:
 # Benign decomposition
 # ---------------------------------------------------------------------------
 
-def _is_run_join(tok: str, present: set[str]) -> bool:
-    """True if `tok` splits entirely into 2+ pieces (each len>=_MIN_PIECE) that are
-    all present in the parsed output -- i.e. a docx run-join, not real loss.
+def _is_run_join(tok: str, present: frozenset[str]) -> bool:
+    """True if `tok` segments into TWO OR MORE pieces that are all present in the
+    parsed output -- i.e. a docx tokenizer run-join, not real loss.
 
-    Recursive so 3+-way fusions ("scienceandtechnology") also resolve."""
+    Requiring >=2 pieces is essential: a token that appears fewer times in parsed
+    than in the docx is a multiset excess (genuine partial loss, e.g. "memoire"
+    duplicated by a note line) and must NOT be excused merely because the whole word
+    exists elsewhere. Pieces may be single characters, because a fused token can be a
+    footnote-marker letter + word ("a"+"see") or a function word + date ("on"+"30");
+    the "each piece is itself a present parsed token" constraint is what keeps a real
+    content word (whose letter-substrings are not standalone parsed tokens) from
+    being spuriously segmented. DP over (start-index, piece-count)."""
     n = len(tok)
-    if n < 2 * _MIN_PIECE:
+    if n < 3:
         return False
 
-    def splittable(s: str) -> bool:
-        if s in present:
-            return True
-        for k in range(_MIN_PIECE, len(s) - _MIN_PIECE + 1):
-            if s[:k] in present and splittable(s[k:]):
+    @lru_cache(maxsize=None)
+    def rec(i: int, pieces: int) -> bool:
+        if i == n:
+            return pieces >= 2
+        for j in range(i + 1, n + 1):
+            if tok[i:j] in present and rec(j, pieces + 1):
                 return True
         return False
 
-    for k in range(_MIN_PIECE, n - _MIN_PIECE + 1):
-        if tok[:k] in present and splittable(tok[k:]):
-            return True
-    return False
+    ok = rec(0, 0)
+    rec.cache_clear()
+    return ok
 
 
-def genuine_loss(gt: Counter, pw: Counter, has_vote: bool) -> Counter:
-    """docx words missing from parsed, after removing the two benign patterns."""
+def genuine_loss(gt: Counter, pw: Counter, has_vote: bool,
+                 symbol_tokens: frozenset[str]) -> Counter:
+    """docx words missing from parsed, after removing the known-benign patterns."""
     missing = gt - pw
     if not missing:
         return Counter()
-    present = set(pw)
+    present = frozenset(pw)
     out: Counter = Counter()
     for tok, cnt in missing.items():
-        if tok.isdigit():
-            continue  # bare numbers are numbering/auto-list noise, not content
+        if tok.isdigit() or len(tok) <= 2:
+            continue  # bare numbers / markers / function-word fragments: never content
+        if tok in symbol_tokens:
+            continue  # the doc's own symbol in a (dropped) running header
         if has_vote and tok in VOTE_LABEL_TOKENS:
-            continue  # benign pattern 1: vote tally labels are structural
+            continue  # benign pattern 1: vote tally labels are structural JSON keys
         if _is_run_join(tok, present):
             continue  # benign pattern 2: docx tokenizer run-join
         out[tok] = cnt
@@ -258,7 +272,8 @@ def main() -> int:
             failures.append((symbol, fmt, Counter({f"<{type(exc).__name__}>": 1})))
             continue
 
-        lost = genuine_loss(gt, pw, has_vote)
+        symbol_tokens = frozenset(_TOKEN.findall(symbol.lower().translate(_STRIP)))
+        lost = genuine_loss(gt, pw, has_vote, symbol_tokens)
         n_lost = sum(lost.values())
         n_checked += 1
         total_gt += sum(gt.values())
