@@ -92,8 +92,11 @@ OPERATIVE_LEAD_VERBS = {
     "establishes", "requires", "instructs", "directs",
 }
 
+# Opening formula. Tolerates a leading quote (A/HRC/PRST statements quote the
+# Council resolution verbatim: '"The Human Rights Council,') so those PRSTs are
+# recognised as resolution-structured (preambular/operative labeling applies).
 OPENING_RE = re.compile(
-    r"^The\s+(General Assembly|Security Council|Economic and Social Council|"
+    r"^[\"“”‘’']?\s*The\s+(General Assembly|Security Council|Economic and Social Council|"
     r"Human Rights Council|Trusteeship Council)\s*,?\s*$"
 )
 
@@ -106,6 +109,11 @@ TITLE_DEC_RE = re.compile(r"^Decision\s+\d+", re.I)
 
 # Operative / subparagraph prefixes (on cleaned, tab-collapsed text).
 OP_NUM_RE = re.compile(r"^(\d+)\.\s+(\S.*)$")            # "1. Requests ..."
+# Tolerant operative number for source/OCR defects where the period after the
+# number is missing or misplaced ("4\tCalls", "232\t.Recognizes", "13\tUrges").
+# Only applied mid-operative and only when the clause opens with a known
+# operative lead verb, so plain numbers / years never match (see step 11).
+OP_NUM_LOOSE_RE = re.compile(r"^(\d{1,3})\b[.\s]+(\S.*)$")
 OP_PAREN_RE = re.compile(r"^\(([A-Za-z]{1,5}|\d{1,3})\)\s+(\S.*)$")  # "(a) ...", "(i) ...", "(1) ..."
 
 # Frontmatter / structural line patterns.
@@ -113,7 +121,13 @@ DIVIDER_RE = re.compile(r"^_{3,}$")
 WP_FOOTNOTE_RE = re.compile(r"^(\d{1,3})/\s+(\S.*)$")    # "1/ United Nations, Treaty Series ..."
 ANNEX_RE = re.compile(r"^(Annex|Appendix)(\s+[IVXLCDM]+|\s+[A-Z])?\s*$", re.I)
 VOTE_RE = re.compile(r"^\[?\s*Adopted\b.*(vote|without a vote)", re.I)
-VOTE_TALLY_RE = re.compile(r"^(In favour|Against|Abstaining|Non-Voting|Absent)\s*:", re.I)
+VOTE_TALLY_RE = re.compile(r"^(In favour|Against|Abstaining|Non-Voting|Absent)\s*:\s*(.*)$", re.I)
+VOTE_SUMMARY_RE = re.compile(
+    r"recorded vote of\s+(\d+)\s+to\s+(\d+)(?:,\s*with\s+(\d+)\s+abstention)?", re.I)
+VOTE_KEY = {
+    "in favour": "in_favour", "against": "against", "abstaining": "abstaining",
+    "non-voting": "non_voting", "absent": "absent",
+}
 MEETING_RE = re.compile(r"^\d+\s*(st|nd|rd|th)\s+(plenary\s+)?meeting\b", re.I)
 DATE_LINE_RE = re.compile(
     r"^\d{1,2}\s+(January|February|March|April|May|June|July|August|September|"
@@ -123,6 +137,13 @@ SESSION_RE = re.compile(r"session\s*$", re.I)
 AGENDA_RE = re.compile(r"^Agenda item\b", re.I)
 RUNNING_HEADER_RE = re.compile(r"^[A-Z]+(/[A-Z0-9()./-]+)+$")   # bare doc symbol like "A/RES/48/70"
 PAGE_NUM_RE = re.compile(r"^-?\s*\d{1,4}\s*-?$")
+# Masthead lines (document letterhead): organisation name, distribution class,
+# language, running symbol/date. Only tagged in the front region -- these are
+# accounted as frontmatter with subtype='masthead' for a cleaner elements stream.
+MASTHEAD_RE = re.compile(
+    r"^(United Nations|Nations Unies|UNITED|NATIONS|Distr\.?|GENERAL|LIMITED|"
+    r"Original\s*:|ORIGINAL\s*:|Security Council|General Assembly|"
+    r"Economic and Social Council|Human Rights Council|Trusteeship Council)\b", re.I)
 ADOPTED_BY_RE = re.compile(r"^Adopted by the (Security Council|General Assembly)", re.I)
 RES_ADOPTED_RE = re.compile(r"^Resolution adopted by ", re.I)
 REPORT_NOTE_RE = re.compile(r"^\[on the (report|recommendation) ", re.I)
@@ -314,6 +335,8 @@ def _new_element(lr: LRow, **kw) -> dict:
         "hyperlinks": lr.hyperlinks or [],
         "note_ids": sorted(set(lr.note_ids)) if lr.note_ids else [],
     }
+    if kw.get("subtype"):
+        el["subtype"] = kw["subtype"]
     if kw.get("annex_index"):
         el["annex_index"] = kw["annex_index"]
     if kw.get("text_index", 1) != 1:
@@ -347,6 +370,66 @@ def _lead_verb_from_text(clean: str) -> str | None:
     if len(words) > 1 and words[1].lower() in ("also", "further", "again"):
         return f"{words[0]} {words[1]}"          # "Recalling also"
     return words[0]
+
+
+def _split_countries(s: str) -> list[str]:
+    """Split a comma-separated country list, dropping trailing bracket/period."""
+    s = s.strip().rstrip("]").rstrip(".").strip()
+    if not s:
+        return []
+    return [p.strip() for p in s.split(",") if p.strip()]
+
+
+def _consume_vote_block(lrows: list["LRow"], i: int) -> tuple[int, list[int], str, dict, dict | None]:
+    """Greedily consume a vote block starting at lrows[i].
+
+    Returns (positions, summary_text, vote, vote_summary). The block is the
+    optional "[Adopted by a recorded vote ...]" line plus the
+    "In favour:/Against:/Abstaining:" labels and their country lists (whether
+    inline or split across following rows). Consumption stops at the first
+    blank/footnote/divider/meeting/opening/annex/operative/date row, or at a
+    non-label row while no tally label is currently open (so we never swallow
+    unrelated tail prose)."""
+    n = len(lrows)
+    positions: list[int] = []
+    summary_parts: list[str] = []
+    vote: dict[str, list[str]] = {"in_favour": [], "against": [], "abstaining": []}
+    vote_summary: dict | None = None
+    cur: str | None = None
+    j = i
+    started = False
+    while j < n:
+        r = lrows[j]
+        rc = r.clean
+        if r.kind in ("empty", "section_break", "footnote") or not rc:
+            break
+        if (DIVIDER_RE.match(rc) or MEETING_RE.match(rc) or OPENING_RE.match(rc)
+                or ANNEX_RE.match(rc) or OP_NUM_RE.match(rc) or DATE_LINE_RE.match(rc)):
+            break
+        m_label = VOTE_TALLY_RE.match(rc)
+        is_adopted = bool(VOTE_RE.match(rc))
+        if started and not (m_label or is_adopted) and cur is None:
+            break
+        if is_adopted:
+            summary_parts.append(rc)
+            ms = VOTE_SUMMARY_RE.search(rc)
+            if ms:
+                vote_summary = {"in_favour": int(ms.group(1)), "against": int(ms.group(2)),
+                                "abstaining": int(ms.group(3)) if ms.group(3) else 0}
+        elif m_label:
+            cur = VOTE_KEY.get(m_label.group(1).lower())
+            if cur is not None:
+                vote.setdefault(cur, [])
+                rest = m_label.group(2).strip()
+                if rest:
+                    vote[cur].extend(_split_countries(rest))
+        elif cur is not None:
+            vote[cur].extend(_split_countries(rc))
+        positions.extend(r.positions)
+        j += 1
+        started = True
+    summary = " ".join(summary_parts) if summary_parts else "Vote record"
+    return j, positions, summary, vote, vote_summary
 
 
 def _footnote_text(raw_text: str) -> str:
@@ -440,6 +523,8 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
                     "hyperlinks": [h for g in group for h in g.hyperlinks],
                     "note_ids": [],
                 }
+                if is_masthead:
+                    el["subtype"] = "masthead"
                 if text_index != 1:
                     el["text_index"] = text_index
                 elements.append(el)
@@ -512,12 +597,30 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
                 i += 1
                 continue
 
-        # 9. vote record ------------------------------------------------------
+        # 9. vote record: consume the whole block into one element -----------
         if VOTE_RE.match(c) or VOTE_TALLY_RE.match(c):
-            elements.append(_new_element(lr, type="vote_record", section=section,
-                                         text=c, text_index=text_index))
+            j, positions, summary, vote, vsum = _consume_vote_block(lrows, i)
+            el = {
+                "positions": positions,
+                "type": "vote_record",
+                "section": section,
+                "paragraph_type": None,
+                "level": None,
+                "prefix": None,
+                "heading_level": None,
+                "text": summary,
+                "lead_verb": None,
+                "hyperlinks": [],
+                "note_ids": [],
+                "vote": vote,
+            }
+            if vsum:
+                el["vote_summary"] = vsum
+            if text_index != 1:
+                el["text_index"] = text_index
+            elements.append(el)
             state = "tail"
-            i += 1
+            i = j if j > i else i + 1
             continue
 
         # 10. signature / meeting line ----------------------------------------
@@ -545,6 +648,25 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
             state = "operative"
             i += 1
             continue
+
+        # tolerant operative number (missing/misplaced period), gated hard:
+        # only continue an already-running operative sequence, and only when the
+        # clause opens with a finite operative verb -- so "232 .Recognizes",
+        # "4 Calls", "13 Urges" are rescued without misreading years/quantities.
+        if state == "operative" and not m_num and not TITLE_GA_NUM_RE.match(c):
+            m_loose = OP_NUM_LOOSE_RE.match(c)
+            if m_loose:
+                w0 = m_loose.group(2).split(" ", 1)[0].strip(",.").lower()
+                if w0 in OPERATIVE_LEAD_VERBS:
+                    op_tracker.top()
+                    elements.append(_new_element(
+                        lr, type="paragraph", section=section,
+                        paragraph_type="operative" if in_main else None,
+                        level=1, prefix=f"{m_loose.group(1)}.",
+                        text=m_loose.group(2).strip(),
+                        lead_verb=_op_lead_verb(m_loose.group(2)), text_index=text_index))
+                    i += 1
+                    continue
 
         m_par = OP_PAREN_RE.match(c)
         if m_par and state in ("operative", "preamble"):
@@ -578,8 +700,9 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
                 for p in lr.positions:
                     dropped.append({"position": p, "reason": "page_artifact"})
             else:
+                st = "masthead" if (MASTHEAD_RE.match(c) or DATE_LINE_RE.match(c)) else None
                 elements.append(_new_element(lr, type="frontmatter", section=section,
-                                             text=c, text_index=text_index))
+                                             text=c, text_index=text_index, subtype=st))
             i += 1
             continue
 

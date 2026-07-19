@@ -94,30 +94,77 @@ def compress_positions(positions: list[int]) -> str:
     return ", ".join(parts)
 
 
-def prefix_number(prefix: str) -> tuple[str, int | None]:
-    """Classify an operative prefix. Returns (level_kind, ordinal or None).
+_ROMAN = {"i": 1, "v": 5, "x": 10, "l": 50, "c": 100, "d": 500, "m": 1000}
 
-    '1.' -> ('num', 1); '(a)' -> ('alpha', 1); '(iv)' -> ('roman', 4)."""
+
+def _roman_value(s: str) -> int | None:
+    if not s or any(ch not in _ROMAN for ch in s):
+        return None
+    total, prevv = 0, 0
+    for ch in reversed(s):
+        v = _ROMAN[ch]
+        total += -v if v < prevv else v
+        prevv = v
+    return total
+
+
+def _alpha_value(s: str) -> int | None:
+    if not re.fullmatch(r"[a-z]+", s):
+        return None
+    val = 0
+    for ch in s:
+        val = val * 26 + (ord(ch) - ord("a") + 1)
+    return val
+
+
+def prefix_number(prefix: str) -> tuple[str, int | None]:
+    """Classify an operative prefix by its own shape. Returns (kind, ordinal).
+
+    '1.' -> ('num', 1); '(a)' -> ('alpha', 1); '(iv)' -> ('roman', 4).
+
+    Standalone shape is ambiguous for tokens that are both a letter and a Roman
+    numeral (i, v, x, l, c, d, m) and for two-letter Romans ("ii", "vi"); the
+    reset-aware detector prefers the parser's `level` via prefix_ordinal() and
+    only falls back here. We resolve the shape ambiguity by preferring Roman when
+    the token is a *multi-letter* well-formed Roman ("ii", "iv", "xiv") and alpha
+    for a single letter (so "(c)" -> alpha 3, the common case)."""
     if not prefix:
         return ("none", None)
-    s = prefix.strip().strip(".").strip("()").strip()
+    s = prefix.strip().strip(".").strip("()").strip().lower()
     if s.isdigit():
         return ("num", int(s))
-    if re.fullmatch(r"[a-z]+", s) and len(s) <= 2:
-        # (a)..(z), (aa)..
-        val = 0
-        for ch in s:
-            val = val * 26 + (ord(ch) - ord("a") + 1)
-        return ("alpha", val)
-    roman = {"i": 1, "v": 5, "x": 10, "l": 50, "c": 100}
-    if s and all(ch in roman for ch in s):
-        total, prevv = 0, 0
-        for ch in reversed(s):
-            v = roman[ch]
-            total += -v if v < prevv else v
-            prevv = v
-        return ("roman", total)
+    if len(s) >= 2 and _roman_value(s) is not None:
+        return ("roman", _roman_value(s))
+    av = _alpha_value(s)
+    if av is not None and len(s) <= 2:
+        return ("alpha", av)
+    rv = _roman_value(s)
+    if rv is not None:
+        return ("roman", rv)
     return ("other", None)
+
+
+def prefix_ordinal(prefix: str, level: object) -> tuple[str, int | None]:
+    """Ordinal of an operative prefix, trusting the parser's `level` to pick the
+    numbering kind (1=numeric, 2=alpha, 3=roman). This sidesteps the standalone
+    i/v/x/c letter-vs-Roman ambiguity: the parser's OpLevelTracker already decided
+    that "(i)" opening a sub-sub run is Roman (level 3) while "(c)" as a third
+    sub-item is alpha (level 2). Falls back to prefix_number() when level is absent."""
+    if not prefix:
+        return ("none", None)
+    s = prefix.strip().strip(".").strip("()").strip().lower()
+    if isinstance(level, int):
+        if level <= 1:
+            return ("num", int(s)) if s.isdigit() else prefix_number(prefix)
+        if level == 2:
+            av = _alpha_value(s)
+            if av is not None:
+                return ("alpha", av)
+        if level >= 3:
+            rv = _roman_value(s)
+            if rv is not None:
+                return ("roman", rv)
+    return prefix_number(prefix)
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +356,7 @@ def analyze(symbol: str, raw: list[dict], parsed: dict | None) -> dict:
         if is_operative(el):
             n_operative += 1
             seen_operative = True
-            kind, ordv = prefix_number(str(el.get("prefix") or ""))
+            kind, ordv = prefix_ordinal(str(el.get("prefix") or ""), el.get("level"))
             lv = el.get("level")
             if not isinstance(lv, int):
                 lv = {"num": 1, "alpha": 2, "roman": 3}.get(kind, 1)
@@ -318,7 +365,10 @@ def analyze(symbol: str, raw: list[dict], parsed: dict | None) -> dict:
                 for deeper in [L for L in expected if L > lv]:
                     del expected[deeper]
                 prev = expected.get(lv)
-                if prev is not None and prev[0] == kind and ordv != prev[1]:
+                # ordv == 1 (or 'a'/'i') is a fresh run start, never a "skip":
+                # a numbered list restarting at 1 in the same section is a new
+                # list (common in omnibus resolutions), not a gap.
+                if prev is not None and prev[0] == kind and ordv != prev[1] and ordv != 1:
                     op_gap = True
                     anoms.append(("seq-gap",
                                   f"operative numbering at level {lv} ({kind}): "
@@ -659,7 +709,23 @@ def render_right(an: dict) -> str:
         elif role == "title":
             body_wrap = f'<div class="body">{esc(el.get("text"))}</div>'
         elif role == "frontmatter":
-            body_wrap = f'<div class="body">{esc(el.get("text"))}</div>'
+            tag = ('<span class="badge kind kind-section_break">masthead</span> '
+                   if el.get("subtype") == "masthead" else "")
+            body_wrap = f'<div class="body">{tag}{esc(el.get("text"))}</div>'
+        elif str(el.get("type") or "").lower() == "vote_record":
+            vote = el.get("vote") or {}
+            parts = []
+            for key, label in (("in_favour", "In favour"), ("against", "Against"),
+                               ("abstaining", "Abstaining"), ("non_voting", "Non-voting"),
+                               ("absent", "Absent")):
+                lst = vote.get(key)
+                if lst:
+                    parts.append(f'<div><b>{label}</b> ({len(lst)}): {esc(", ".join(lst))}</div>')
+            vs = el.get("vote_summary")
+            summ = (f' <span class="mono">[{vs["in_favour"]}-{vs["against"]}-{vs["abstaining"]}]</span>'
+                    if isinstance(vs, dict) else "")
+            body_wrap = (f'<div class="body"><span class="badge kind">vote</span>{summ} '
+                         f'{esc(el.get("text"))}{"".join(parts)}</div>')
         elif role == "unknown":
             t = el.get("type") or "?"
             body_wrap = f'<div class="body"><span class="mono">[type={esc(t)}]</span> {esc(el.get("text"))}</div>'
