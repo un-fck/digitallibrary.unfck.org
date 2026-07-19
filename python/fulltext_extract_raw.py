@@ -45,7 +45,7 @@ from psycopg.types.json import Jsonb
 
 from fulltext_common import ARCHIVE_ROOT, get_conn, upsert_document_file
 
-EXTRACTOR_VERSION = "raw-v1"
+EXTRACTOR_VERSION = "raw-v2"
 BATCH_DOCS = 20  # docs per short-lived DB connection
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -91,6 +91,10 @@ def _walk_runs(el: etree._Element, runs: list[dict], textboxes: list[etree._Elem
         tag = _ln(child)
         if tag == "r":
             runs.append(_run_token(child))
+            # DrawingML text boxes live INSIDE runs (w:r > mc:AlternateContent
+            # > w:drawing > ... > wps:txbx > w:txbxContent) — _run_token only
+            # reads t/tab/br, so descend separately for their paragraphs.
+            _collect_run_textboxes(child, textboxes)
         elif tag == "txbxContent":
             # A text box: its paragraphs become separate rows, not parent text.
             textboxes.extend(child.findall(W + "p"))
@@ -107,6 +111,24 @@ def _walk_runs(el: etree._Element, runs: list[dict], textboxes: list[etree._Elem
         else:
             # hyperlink, ins, smartTag, fldSimple, sdt/sdtContent, drawing, etc.
             _walk_runs(child, runs, textboxes)
+
+
+def _collect_run_textboxes(el: etree._Element, textboxes: list[etree._Element]) -> None:
+    """Collect w:txbxContent paragraphs nested anywhere inside a run,
+    processing only one branch of mc:AlternateContent (Choice preferred)
+    so the same text box is not counted from both Choice and Fallback."""
+    for child in el:
+        tag = _ln(child)
+        if tag == "txbxContent":
+            textboxes.extend(child.findall(W + "p"))
+        elif tag == "AlternateContent":
+            branch = child.find("{http://schemas.openxmlformats.org/markup-compatibility/2006}Choice")
+            if branch is None:
+                branch = child.find("{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback")
+            if branch is not None:
+                _collect_run_textboxes(branch, textboxes)
+        else:
+            _collect_run_textboxes(child, textboxes)
 
 
 def _run_token(r: etree._Element) -> dict:
