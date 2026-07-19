@@ -60,6 +60,7 @@ import random
 import re
 import sys
 import time
+import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -300,12 +301,19 @@ def fetch_ods(
     errors, 5xx, and empty bodies. On HTTP 429/403 or a connection reset it
     pauses BLOCK_PAUSE before retrying and bumps run.block_hits. Returns
     (status_code, content, content_type)."""
-    params = {"s": document_symbol, "l": "en", "t": "doc"}
+    # ODS requires %20 for spaces in the symbol; requests' params dict would
+    # encode them as '+', which redirects to the /error page (looks identical
+    # to "document not found"). Build the query string ourselves.
+    query = urllib.parse.urlencode(
+        {"s": document_symbol, "l": "en", "t": "doc"},
+        quote_via=urllib.parse.quote,
+    )
+    url = f"{ODS_URL}?{query}"
     last_exc: Exception | None = None
     for attempt in range(MAX_RETRIES):
         try:
             run.requests += 1
-            resp = session.get(ODS_URL, params=params, timeout=HTTP_TIMEOUT)
+            resp = session.get(url, timeout=HTTP_TIMEOUT)
             content = resp.content
             if resp.status_code in (403, 429):
                 run.block_hits += 1

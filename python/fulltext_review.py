@@ -253,20 +253,53 @@ def analyze(symbol: str, raw: list[dict], parsed: dict | None) -> dict:
     unaccounted = [p for p in raw_positions if p not in pos_in_elem and p not in pos_dropped]
     pct_accounted = round(100.0 * accounted / total, 1) if total else 100.0
 
-    # per-element anomalies + operative/preambular structure checks
+    # per-element anomalies + operative/preambular structure checks.
+    #
+    # Operative-gap detection is HIERARCHICAL and RESET-AWARE (v2). The old
+    # detector kept a single last-ordinal per prefix-kind (num/alpha/roman) for
+    # the whole document, so a level-2 "(a)..(e)" run made the *next* "(a)"
+    # (starting a fresh sub-list under the following top-level item) look like a
+    # jump 5 -> 1, and every restart of numbering in a new section / sub-text /
+    # annex was flagged. It also let a level-2 run "break" the level-1 2 -> 3
+    # succession. The new detector:
+    #   * tracks an expected next-ordinal per *level* (1=top, 2=(a).., 3=(i)..);
+    #   * when an item at level L appears, all deeper levels (>L) are reset, so a
+    #     sub-list restarting at (a)/(i) under each parent is never a "gap";
+    #   * resets ALL levels at a structural boundary -- a heading, an opening
+    #     formula, an annex/appendix/section change, or a new text_index (a
+    #     consolidated sub-resolution or annexed instrument restarts numbering);
+    #   * treats a kind switch at the same level (numeric "(1)" vs alpha "(a)")
+    #     as a fresh run, not a jump.
+    # Only a genuine break WITHIN one continuous same-level, same-kind run
+    # (e.g. top-level 12 -> 14, or (c) -> (e)) is reported.
     elem_anoms: list[list[tuple[str, str]]] = [[] for _ in elements]
     seen_operative = False
     op_gap = False
     level_jump = False
     n_operative = n_preambular = 0
-    last_ord: dict[str, int] = {}  # level_kind -> last ordinal at top of a run
     prev_level: int | None = None
+    # level -> (kind, next_expected_ordinal) for the run currently open at level
+    expected: dict[int, tuple[str, int]] = {}
+    cur_section: str | None = None
+    cur_text_index: object = None
 
     for i, el in enumerate(elements):
         anoms = elem_anoms[i]
+        etype = str(el.get("type") or "").lower()
+        sec = str(el.get("section") or "").lower()
+        ti = el.get("text_index", 1)
         text = el.get("text")
         if (text is None or str(text).strip() == "") and role_of(el) not in ("table",):
             anoms.append(("empty", "element has empty text"))
+
+        # structural boundary -> a new numbering context; reset all open runs
+        if sec != cur_section or ti != cur_text_index:
+            expected.clear()
+            prev_level = None
+            cur_section, cur_text_index = sec, ti
+        if etype in ("heading", "opening", "title", "divider"):
+            expected.clear()
+            prev_level = None
 
         if is_preambular(el):
             n_preambular += 1
@@ -277,14 +310,21 @@ def analyze(symbol: str, raw: list[dict], parsed: dict | None) -> dict:
             n_operative += 1
             seen_operative = True
             kind, ordv = prefix_number(str(el.get("prefix") or ""))
-            if ordv is not None:
-                exp = last_ord.get(kind)
-                if exp is not None and ordv != exp + 1:
-                    op_gap = True
-                    anoms.append(("seq-gap", f"operative numbering jumps: expected {exp + 1}, got {ordv} ({kind})"))
-                last_ord[kind] = ordv
             lv = el.get("level")
-            if isinstance(lv, int):
+            if not isinstance(lv, int):
+                lv = {"num": 1, "alpha": 2, "roman": 3}.get(kind, 1)
+            if ordv is not None:
+                # a shallower/equal item ends any deeper open runs
+                for deeper in [L for L in expected if L > lv]:
+                    del expected[deeper]
+                prev = expected.get(lv)
+                if prev is not None and prev[0] == kind and ordv != prev[1]:
+                    op_gap = True
+                    anoms.append(("seq-gap",
+                                  f"operative numbering at level {lv} ({kind}): "
+                                  f"expected {prev[1]}, got {ordv}"))
+                expected[lv] = (kind, ordv + 1)
+            if isinstance(el.get("level"), int):
                 if prev_level is not None and lv > prev_level + 1:
                     level_jump = True
                     anoms.append(("level-jump", f"indentation level jumps {prev_level} -> {lv}"))
@@ -310,8 +350,17 @@ def analyze(symbol: str, raw: list[dict], parsed: dict | None) -> dict:
         flags.append("no-operatives")
     if symbol.startswith("A/RES") and parsed is not None and n_preambular == 0:
         flags.append("no-preambulars")
-    if total and len(pos_dropped) / total > 0.30:
-        flags.append(f"dropped>{int(100 * len(pos_dropped) / total)}%")
+    # dropped% flag: 'empty' and 'section_break' are layout spacer rows (blank
+    # paragraphs, WP section markers) -- dropping them is correct and says nothing
+    # about parse quality, so they are excluded from the flag. A doc that is 63/64
+    # empty-spacer drops with one real drop is a clean parse, not "dropped>71%".
+    # The raw dropped count stays visible in the index; the flag fires only on the
+    # meaningful (content-bearing) drop rate.
+    IGNORED_DROP_REASONS = {"empty", "section_break"}
+    n_dropped_meaningful = sum(
+        1 for r in pos_dropped.values() if r not in IGNORED_DROP_REASONS)
+    if total and n_dropped_meaningful / total > 0.15:
+        flags.append(f"dropped>{int(100 * n_dropped_meaningful / total)}%")
     if issues:
         flags.append(f"issues:{len(issues)}")
 
@@ -322,6 +371,7 @@ def analyze(symbol: str, raw: list[dict], parsed: dict | None) -> dict:
         "unaccounted": set(unaccounted),
         "n_unaccounted": len(unaccounted),
         "n_dropped": len(pos_dropped),
+        "n_dropped_meaningful": n_dropped_meaningful,
         "pct_accounted": pct_accounted,
         "elements": elements,
         "dropped": dropped,
@@ -698,7 +748,7 @@ def render_index(records: list[dict]) -> str:
             "<th>symbol</th><th>family</th><th>fmt</th>"
             "<th data-num=1>raw</th><th data-num=1>elems</th>"
             "<th data-num=1>% acct</th><th data-num=1>unacct</th>"
-            "<th data-num=1>dropped</th><th data-num=1>issues</th>"
+            "<th data-num=1>dropped</th><th data-num=1>drop*</th><th data-num=1>issues</th>"
             "<th>annex</th><th>red flags</th></tr>")
     body = []
     for r in records:
@@ -716,6 +766,7 @@ def render_index(records: list[dict]) -> str:
             f'<td class="num"{pct_cls} data-k="{pct}">{pct}</td>'
             f'<td class="num" data-k="{an["n_unaccounted"]}">{an["n_unaccounted"]}</td>'
             f'<td class="num">{an["n_dropped"]}</td>'
+            f'<td class="num">{an["n_dropped_meaningful"]}</td>'
             f'<td class="num">{len(an["issues"])}</td>'
             f'<td data-k="{1 if an["has_annex"] else 0}">{"yes" if an["has_annex"] else "—"}</td>'
             f'<td class="flagcell" data-k="{len(an["flags"])}">{flagcell}</td>'
