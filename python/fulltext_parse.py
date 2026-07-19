@@ -102,6 +102,7 @@ OPERATIVE_LEAD_VERBS = {
     "designates", "proclaims", "resolves", "supports", "commends", "confirms",
     "underlines", "underscores", "recognizes", "recognises", "determines",
     "establishes", "requires", "instructs", "directs",
+    "implores", "pledges", "undertakes",
 }
 
 # Opening formula. Tolerates a leading quote (A/HRC/PRST statements quote the
@@ -125,13 +126,25 @@ OP_NUM_RE = re.compile(r"^(\d+)\.\s+(\S.*)$")            # "1. Requests ..."
 # number is missing or misplaced ("4\tCalls", "232\t.Recognizes", "13\tUrges").
 # Only applied mid-operative and only when the clause opens with a known
 # operative lead verb, so plain numbers / years never match (see step 11).
-OP_NUM_LOOSE_RE = re.compile(r"^(\d{1,3})\b[.\s]+(\S.*)$")
-OP_PAREN_RE = re.compile(r"^\(([A-Za-z]{1,5}|\d{1,3})\)\s+(\S.*)$")  # "(a) ...", "(i) ...", "(1) ..."
+OP_NUM_LOOSE_RE = re.compile(r"^(\d{1,3})[.\s]*(\S.*)$")
+# Letter cap is 7 to admit long Roman subparagraph markers ("(xxviii)"=6,
+# "(xxxviii)"=7). classify_paren() still disambiguates alpha vs Roman, so the
+# wider cap only rescues genuine long numerals that {1,5} silently dropped.
+OP_PAREN_RE = re.compile(r"^\(([A-Za-z]{1,7}|\d{1,3})\)\s+(\S.*)$")  # "(a) ...", "(i) ...", "(1) ..."
 
 # Frontmatter / structural line patterns.
 DIVIDER_RE = re.compile(r"^_{3,}$")
 WP_FOOTNOTE_RE = re.compile(r"^(\d{1,3})/\s+(\S.*)$")    # "1/ United Nations, Treaty Series ..."
-ANNEX_RE = re.compile(r"^(Annex|Appendix)(\s+[IVXLCDM]+|\s+[A-Z])?\s*$", re.I)
+# Annex/appendix heading. Matches the bare form ("Annex", "Annex II", "Annex A")
+# AND a titled form where a label is followed by a running title on the SAME line
+# ("Annex A - Items subject to a no-objection process", "ANNEX 1 - <plan>"). A
+# title is only accepted AFTER a label (letter / Roman / number) so body prose
+# beginning with the word "Annex"/"Appendix" (e.g. "Annex to the present
+# resolution ...") is NOT swallowed; the (?=\s|$) also rejects "Annexation ...".
+ANNEX_RE = re.compile(
+    r"^(Annex|Appendix)(?=\s|$)"
+    r"(?:\s+(?:[IVXLCDM]+|[A-Z]|\d{1,3})"
+    r"(?:\s*[-–—:.]\s*\S.*|\s+\S.*)?)?\s*$", re.I)
 VOTE_RE = re.compile(r"^\[?\s*Adopted\b.*(vote|without a vote)", re.I)
 VOTE_TALLY_RE = re.compile(r"^(In favour|Against|Abstaining|Non-Voting|Absent)\s*:\s*(.*)$", re.I)
 VOTE_SUMMARY_RE = re.compile(
@@ -295,14 +308,21 @@ def build_logical_rows(raw_rows: list[dict], fmt: str) -> list[LRow]:
 SUBRES_LETTER_RE = re.compile(r"^([A-Z])\.?$")   # bare "A" / "B." sub-resolution heading
 
 
-def _annex_scope_is_instrument(lrows: list[LRow], i: int) -> bool:
-    """True if the annex whose heading is lrows[i] is a scoped governance instrument.
+def _annex_subtype(lrows: list[LRow], i: int, heading: str) -> str | None:
+    """Classify the annex whose heading is lrows[i]: 'amendment', 'instrument', or None.
 
-    Scans from the heading to the next annex/appendix/opening boundary (or end).
-    Triggers on EITHER: (a) the annex carries its own opening formula (an annexed
-    resolution/agreement with a preamble), OR (b) the annex title matches an
-    instrument keyword (terms of reference / rules of procedure / statute / ...),
-    it is NOT an 'Amendments to ...' diff, and it has >=2 numbered paragraphs.
+    Scans from the heading to the next annex/appendix boundary (or end) to read the
+    annex's title line and count its numbered paragraphs. Priority:
+      * 'amendment' -- the heading OR its title line opens with 'Amendment(s)'
+        (e.g. 'Amendments to the terms of reference ...'); the body is a diff
+        ('Amend paragraph N to read: ...'), NOT the instrument itself, so it is
+        NEVER scoped -- pure labeling, paragraph_type stays null.
+      * 'instrument' -- the annex carries its OWN opening formula (an annexed
+        resolution/agreement with a preamble), OR its title matches an instrument
+        keyword (terms of reference / rules of procedure / statute / ...) and it
+        has >=2 numbered paragraphs. Only 'instrument' annexes are scoped (their
+        numbered paragraphs are labeled operative, tracked independently).
+      * None -- plain annex (programme of action, declaration, agenda, list, ...).
     """
     n = len(lrows)
     title_line = None
@@ -323,12 +343,13 @@ def _annex_scope_is_instrument(lrows: list[LRow], i: int) -> bool:
         if OP_NUM_RE.match(cj):
             n_numbered += 1
         j += 1
+    if ANNEX_AMENDMENT_RE.match(heading) or (title_line and ANNEX_AMENDMENT_RE.match(title_line)):
+        return "amendment"
     if has_opening:
-        return True
-    if title_line and ANNEX_INSTRUMENT_RE.search(title_line) \
-            and not ANNEX_AMENDMENT_RE.match(title_line) and n_numbered >= 2:
-        return True
-    return False
+        return "instrument"
+    if title_line and ANNEX_INSTRUMENT_RE.search(title_line) and n_numbered >= 2:
+        return "instrument"
+    return None
 
 
 def detect_subres_blocks(lrows: list[LRow]) -> dict[int, dict]:
@@ -764,13 +785,14 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
                 section = "appendix"
             op_tracker.top()
             op_tracker.reset()
-            annex_scoped = _annex_scope_is_instrument(lrows, i)
+            annex_sub = _annex_subtype(lrows, i, c)
+            annex_scoped = annex_sub == "instrument"
             el = _new_element(lr, type="heading", section=section, heading_level=1,
                               text=c, text_index=text_index)
             if section == "annex":
                 el["annex_index"] = annex_index
-            if annex_scoped:
-                el["subtype"] = "instrument"
+            if annex_sub:
+                el["subtype"] = annex_sub
             elements.append(el)
             # 'annextitle' captures the instrument/annex title line as a title
             # element; then the (scoped) preamble/operative machine runs.
@@ -869,15 +891,24 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
         if state == "operative" and not m_num and not TITLE_GA_NUM_RE.match(c):
             m_loose = OP_NUM_LOOSE_RE.match(c)
             if m_loose:
-                w0 = m_loose.group(2).split(" ", 1)[0].strip(",.").lower()
-                if w0 in OPERATIVE_LEAD_VERBS:
+                rest = m_loose.group(2).strip()
+                w0 = rest.split(" ", 1)[0].strip(",.").lower()
+                # source may drop the period AND glue the number to an adverb-led
+                # verb ("6Also reaffirms ..."): look past a leading adverb for the
+                # finite operative verb before deciding.
+                verb = w0
+                if w0 in ("also", "further", "again", "finally", "moreover") and " " in rest:
+                    verb = rest.split(" ", 2)[1].strip(",.").lower()
+                if verb in OPERATIVE_LEAD_VERBS:
                     op_tracker.top()
+                    last_op_number = int(m_loose.group(1))
                     elements.append(_new_element(
                         lr, type="paragraph", section=section,
                         paragraph_type="operative" if label_ops else None,
                         level=1, prefix=f"{m_loose.group(1)}.",
-                        text=m_loose.group(2).strip(),
-                        lead_verb=_op_lead_verb(m_loose.group(2)), text_index=text_index))
+                        text=rest,
+                        lead_verb=_op_lead_verb(rest), text_index=text_index))
+                    state = "operative"
                     i += 1
                     continue
 

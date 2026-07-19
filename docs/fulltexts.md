@@ -225,3 +225,102 @@ already defined so the schema is stable before that code lands.
 | `python/fulltext_common.py` | Shared helpers (archive, sniff, DB, ledger, state) |
 | `python/fulltext_fetch.py` | Stage 1 — fetch + archive from ODS |
 | `python/fulltext_convert.py` | Stage 2 — doc/wpd → docx via LibreOffice |
+| `python/fulltext_parse.py` | Stage 4 — semantic parse → one JSON per doc in `parsed_dev/` |
+| `python/fulltext_parse_metrics.py` | Accounting/metrics report + cross-check vs legacy `mandates.paragraphs` |
+| `python/fulltext_review.py` | Two-column raw\|parsed HTML review harness + `_flags.json` |
+
+## Semantic layer policies
+
+The semantic parser (`fulltext_parse.py`, `parser_version = "sem-v1"`) classifies
+every raw paragraph into one element and enforces a hard accounting invariant:
+each raw position is consumed by exactly one element's `positions[]` or by
+`dropped[]`. Corpus-wide the parser accounts **100 %** of positions with **0**
+accounting failures. The rules below are the deliberate labelling decisions —
+they are policy, not incidental behaviour, and reviewers should treat deviations
+as bugs.
+
+- **`paragraph_type` is resolution-body machinery only.** `operative` /
+  `preambular` are assigned **only** in the resolution `main` section (and inside
+  a scoped instrument annex, below). They answer "is this a preambular or
+  operative clause of the resolution?" — a question that is only meaningful for
+  the resolution body. Everywhere else `paragraph_type` is `null`, even when the
+  text is numbered.
+
+- **Non-instrument annexes keep `paragraph_type = null`.** Declarations,
+  programmes of action, agendas, standard-minimum-rules, guidelines, plans,
+  lists, schedules and tables that are *annexed* to a resolution are backmatter,
+  not resolution operatives. Their numbered/lettered items keep their `prefix`
+  and `level` and their `A. … / B. …` section headers are captured as `heading`
+  elements, so the internal structure is fully recoverable — but their
+  "operativeness" is the *instrument's*, not the resolution's mandate, so
+  `paragraph_type` stays `null`. Rationale: labelling an annexed programme's 40
+  action points as resolution "operatives" would inflate mandate counts with
+  content that carries no resolution-level operative force. (Legacy
+  `mandates.paragraphs` did the opposite — see the cross-check note below.)
+
+- **Instrument-annex scoping (the one exception).** An annex that is really an
+  annexed *governance instrument* — terms of reference, rules of procedure,
+  statute, constitution, charter, regulations, mandate-of-the-body — gets
+  **scoped** operative labelling: its numbered paragraphs are the instrument's
+  own operatives, tracked with a numbering context independent of the parent
+  resolution (`section = "annex"`, `paragraph_type = "operative"`, heading tagged
+  `subtype = "instrument"`). Trigger: the annex carries its **own** opening
+  formula (an annexed resolution/agreement), **or** its title matches an
+  instrument keyword (`ANNEX_INSTRUMENT_RE`) and it has ≥2 numbered paragraphs.
+  In the 1994+ RES/PRST corpus this fires on exactly one document
+  (`E/RES/2020/19`, "Revised terms of reference of the Standing Working Group on
+  Ageing"); it is defensive scaffolding for the broader ~20k corpus.
+
+- **Amendment annexes get `subtype = "amendment"` (pure labelling).** An annex
+  whose heading or title opens with "Amendment(s) to …" (body lines like "Amend
+  paragraph N to read:") is a **diff against** an instrument, not the instrument
+  itself, so it is **never** scoped — `paragraph_type` stays `null`. The annex
+  heading is tagged `subtype = "amendment"` for downstream filtering only. Fires
+  on `A/RES/73/124` and `A/RES/79/144` (amendments to bodies' terms of
+  reference).
+
+- **PRST statement bodies are `null`.** Presidential statements (`S/PRST`,
+  `A/HRC/PRST`) have no `The <organ>,` opening formula; their quoted body
+  ("The Security Council reaffirms …") is a *statement*, not a preambular/
+  operative resolution structure, so body paragraphs are `type = "paragraph",
+  paragraph_type = null`. (HRC PRSTs that quote a Council resolution verbatim,
+  opening with `"The Human Rights Council,`, are the exception: `OPENING_RE`
+  tolerates the leading quote and they get normal preambular/operative labelling.)
+
+- **Opening formula is its own element.** `The General Assembly,` /
+  `The Security Council,` etc. is emitted as `type = "opening"` with
+  `paragraph_type = "preambular", level = 0`. It marks the `front → preamble`
+  state transition and anchors the preamble/operative boundary (the first
+  operative is the first `N.` clause, or an unnumbered finite operative verb).
+
+- **`inferred_operative` rescue semantics.** When a resolution **drops an
+  operative number at source** (missing/misplaced period, e.g. `A/RES/80/167`'s
+  "6Also reaffirms …"; or an omitted `5.`/`(e)`–`(h)`), an unlabeled clause is
+  relabeled operative **only** when it (a) sits inside a running operative
+  sequence with a **confirmed numbering gap ahead** and (b) reads operative
+  (finite lead verb, or a `To <verb>` sub-item). Such elements carry
+  `inferred_operative = true` (auditable/reversible) and **no invented prefix**.
+  Default on (`RESCUE_INFERRED_OPERATIVE`). The glued/period-dropped number case
+  (`6Also reaffirms`, `4Calls`) is additionally rescued by a sequence-and-verb-
+  gated loose matcher that reconstructs the `N.` prefix.
+
+- **Multi-text segmentation.** A physical ODS file may hold several logical
+  resolutions. They are segmented into `text_index` blocks — numbering, section
+  and preamble/operative state reset at each boundary — on two confirmed signals
+  only: (1) a bare capital-letter heading (`A`, `B`, …) **confirmed** by an
+  opening formula within a short look-ahead (consolidated/omnibus resolutions
+  such as `A/RES/48/75` A–L, or `A/RES/80/244A-C`); (2) a **repeated** opening
+  formula with no preceding letter heading (e.g. an ECOSOC resolution that
+  transmits a General Assembly text — `E/RES/2025/16`). Section headings *inside*
+  one resolution (`I`, `A. Utilization …` followed by `1. …`, never an opening)
+  are **never** mistaken for a new text.
+
+**Cross-check note (legacy `mandates.paragraphs`).** The legacy table labels many
+non-resolution paragraphs `preambular` by default: it swept the entire annexed
+Aide-Memoire of `S/PRST/2015/23` (255 paragraphs) into `preambular`, and labelled
+the whole `Recommends the following: (a)…(i)…` recommendation structure of
+`E/RES/2024/14` (108 paragraphs) `preambular` with **zero** operatives. Our
+policy leaves annex/PRST-body content `null` and correctly splits the recommend-
+ation into operative sub-items, so our totals differ by design; text is preserved
+either way. Outside those two documents the overlap agrees to within ±2
+paragraphs (an opening-formula/chapeau boundary rounding).
