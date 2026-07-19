@@ -22,9 +22,9 @@ safety net:)
   * Soft-block handling: an html/unknown response is retried up to 2 more times
     (sleeps of 15 s then 45 s) before the symbol is recorded 'unavailable'.
     (html is ODS's plain error page — encoding bug ruled out rate limiting.)
-  * A tiered circuit breaker: 8 consecutive block/miss outcomes ⇒ pause 15 min
-    (1st trip), 60 min (2nd trip), then exit cleanly on the 3rd (resumable — we
-    would rather stop than hammer).
+  * A circuit breaker: 25 consecutive block/miss outcomes ⇒ pause 5 min, then
+    15 min on later trips; never exits (consecutive misses are usually genuine
+    ODS absence clusters, not blocks).
   * HTTP 429/403 or a connection reset ⇒ an immediate 10-min pause before
     retrying, and it counts toward the circuit breaker.
 
@@ -109,8 +109,8 @@ REST_EVERY = 500                   # requests between scheduled rest breaks
 REST_MIN, REST_MAX = 60.0, 120.0   # rest break length: 1-2 min
 SOFT_BLOCK_SLEEPS = (15.0, 45.0)   # extra retries on html/unknown before 'unavailable'
 BLOCK_PAUSE = 600.0                # 10 min on HTTP 429/403 or connection reset
-CIRCUIT_THRESHOLD = 8              # consecutive block/miss outcomes ⇒ trip
-CIRCUIT_SLEEPS = (900.0, 3600.0)   # trip #1 ⇒ 15 min, trip #2 ⇒ 60 min, trip #3 ⇒ exit
+CIRCUIT_THRESHOLD = 25             # consecutive block/miss outcomes ⇒ trip
+CIRCUIT_SLEEPS = (300.0, 900.0)    # trip #1 ⇒ 5 min, trip #2+ ⇒ 15 min (never exits)
 
 _WS_RE = re.compile(r"\s")
 
@@ -547,23 +547,19 @@ def main() -> int:
             flush()
             persist_watermark(done)
 
-        # Tiered circuit breaker: trip #1 ⇒ 15 min, #2 ⇒ 60 min, #3 ⇒ stop.
+        # Circuit breaker: consecutive misses are usually genuine absence
+        # clusters (e.g. E/RES/2011/12-16 share a missing volume), NOT blocks
+        # (the phantom-block era ended with the %20 encoding fix). So: high
+        # threshold, short pauses, and never exit — just log loudly.
         if consecutive_block >= CIRCUIT_THRESHOLD:
             circuit_trips += 1
             flush()
             persist_watermark(done)
-            if circuit_trips > len(CIRCUIT_SLEEPS):
-                print(f"\n!! Circuit breaker tripped {circuit_trips}× "
-                      f"({consecutive_block} consecutive block/miss outcomes). "
-                      f"Exiting cleanly — this is resumable, re-run later to continue.",
-                      file=sys.stderr, flush=True)
-                print(f"\nStopped early. ok={ok} unavailable={unavailable} "
-                      f"failed={failed} of {total} (processed {done}).")
-                return 0
-            long_pause(CIRCUIT_SLEEPS[circuit_trips - 1],
+            pause = CIRCUIT_SLEEPS[min(circuit_trips, len(CIRCUIT_SLEEPS)) - 1]
+            long_pause(pause,
                        f"circuit breaker trip #{circuit_trips}: "
-                       f"{consecutive_block} consecutive block/miss outcomes — "
-                       f"assuming soft-block")
+                       f"{consecutive_block} consecutive misses — likely an "
+                       f"absence cluster; pausing as a precaution")
             consecutive_block = 0
 
         # Scheduled rest break to keep well below the observed block threshold.
