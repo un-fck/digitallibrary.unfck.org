@@ -210,11 +210,95 @@ Requires LibreOffice (`soffice` on PATH, or set `SOFFICE_BIN`). Each worker uses
 an isolated `-env:UserInstallation` profile under `/tmp/lo_profile_<n>` so
 parallel instances don't collide over the shared profile.
 
+### 5. Acceptance gate — text preservation (run before any bulk parse)
+
+`python/fulltext_verify_text.py` is the **acceptance gate** for the semantic
+parse. It is independent of `document_paragraphs_raw`: it re-reads the
+ground-truth word content straight from each archived `.docx` (body + tables +
+foot/endnotes) and checks, per document, that every content word survives into
+the parsed JSON in `parsed_dev/`. It exits **nonzero if any document shows genuine
+token loss**, so it can gate CI and the ~20k bulk run.
+
+```bash
+# whole corpus (exit 0 == every doc preserved; nonzero == investigate)
+uv run python python/fulltext_verify_text.py
+
+# a subset / one family while iterating
+uv run python python/fulltext_verify_text.py --symbols A/RES/80/167 S/RES/2806(2025)
+uv run python python/fulltext_verify_text.py --limit 100 --verbose
+```
+
+Two comparison artifacts are decomposed away as **known-benign** so they never
+false-positive (see the module docstring): (1) **vote-JSON keys** — a vote
+record's tally labels (`In favour`/`Against`/`Abstaining`/…) are structural JSON,
+not element text, while the member-state names *are* compared; (2) **tokenizer
+run-joins** — where python-docx fuses two words across a soft line break
+(`Commissioner`+`for`, `a`+`See`, `on`+`30`) and the parser keeps them correctly
+separate, so the fused docx token segments back into parsed tokens. Hyphens/
+apostrophes are normalised on both sides first; bare numbers, ≤2-char fragments,
+and the document's own symbol (running-header `PRST`/`RES`) are ignored.
+
+**Current known residual (not a parser defect):** exactly **3** documents fail —
+`S/PRST/2001/9`, `S/PRST/2014/3`, `S/RES/1881(2009)` — on a "Reissued for
+technical reasons …" provenance note that the **raw extractor** drops before the
+parser sees it (verified absent from `document_paragraphs_raw`); a `.doc→.docx`
+conversion duplicates it 4×. Fix belongs upstream in extraction. Acknowledge once
+triaged with `--ignore-symbols S/PRST/2001/9 S/PRST/2014/3 'S/RES/1881(2009)'`
+(or raise `--max-loss`) so the gate is green on the rest. Aggregate preservation
+across the 763-doc corpus is **99.998 %** (760/763 clean).
+
 ### 4. Extract raw paragraphs
 
-Later stage (extractor script + `extractor_version`). The table
-`digitallibrary.document_paragraphs_raw` and its status value `extracted` are
-already defined so the schema is stable before that code lands.
+`python/fulltext_extract_raw.py` reads each `converted` docx and writes the
+low-interpretation rows to `digitallibrary.document_paragraphs_raw`
+(`extractor_version = raw-v2`), advancing status `converted → extracted` (failures
+`extract_failed`, error recorded). Re-derivable from the archive at any time.
+
+```bash
+uv run python python/fulltext_extract_raw.py            # all 'converted' docs
+uv run python python/fulltext_extract_raw.py --limit 20
+uv run python python/fulltext_extract_raw.py --force    # also re-extract 'extracted' rows
+```
+
+### 6. Semantic parse → JSON + semantic DB
+
+`python/fulltext_parse.py` (parser_version `sem-v1`) classifies the raw rows into
+semantic elements. It always writes one JSON per doc to `parsed_dev/`; with
+`--to-db` it *also* loads the two semantic tables (migration 003) and advances
+status `extracted → parsed` (hard failures `parse_failed`). It targets docs with
+status `extracted` **or** `parsed`, so a re-parse still finds already-loaded docs.
+
+```bash
+uv run python python/fulltext_parse.py                  # JSON only (parsed_dev/*.json)
+uv run python python/fulltext_parse.py --to-db          # JSON + semantic DB
+uv run python python/fulltext_parse.py --db-only        # semantic DB only, skip JSON
+uv run python python/fulltext_parse.py --symbol A/RES/48/75 --to-db
+```
+
+Loading is **delete-then-insert per `(symbol_normalized, lang)`** in both tables,
+batched over short-lived ~20-doc connections — idempotent and safe to re-run. An
+accounting failure does not fail the load (the doc is still written and the
+failure recorded in `document_parses.issues`); only a Python parse/insert
+exception yields `parse_failed`.
+
+### 7. Full top-up cycle (orchestrator)
+
+After a fetch batch lands new `fetched` rows, `python/fulltext_pipeline.py` runs
+the three post-fetch stages in order as subprocesses — `convert → extract_raw →
+parse --to-db` — prints a per-stage summary table, and exits non-zero if any
+stage fails (a failing stage aborts the rest). This is what a cron/manual top-up
+calls; **fetch is deliberately not part of it** (slow, soft-block-sensitive, run
+detached — step 2). `--limit N` is forwarded to every stage for smoke tests.
+
+```bash
+# after fetch batches land:
+uv run python python/fulltext_pipeline.py               # full top-up cycle
+uv run python python/fulltext_pipeline.py --limit 20    # smoke test
+uv run python python/fulltext_pipeline.py --workers 8
+
+# then the acceptance gate + review harness over the fresh output:
+uv run python python/fulltext_verify_text.py
+```
 
 ## Files
 
@@ -225,9 +309,13 @@ already defined so the schema is stable before that code lands.
 | `python/fulltext_common.py` | Shared helpers (archive, sniff, DB, ledger, state) |
 | `python/fulltext_fetch.py` | Stage 1 — fetch + archive from ODS |
 | `python/fulltext_convert.py` | Stage 2 — doc/wpd → docx via LibreOffice |
-| `python/fulltext_parse.py` | Stage 4 — semantic parse → one JSON per doc in `parsed_dev/` |
+| `python/fulltext_extract_raw.py` | Stage 3 — docx → `document_paragraphs_raw` (raw layer) |
+| `python/fulltext_parse.py` | Stage 4 — semantic parse → `parsed_dev/*.json` and, with `--to-db`, the semantic tables |
+| `python/fulltext_pipeline.py` | Top-up orchestrator: convert → extract_raw → parse `--to-db` |
 | `python/fulltext_parse_metrics.py` | Accounting/metrics report + cross-check vs legacy `mandates.paragraphs` |
 | `python/fulltext_review.py` | Two-column raw\|parsed HTML review harness + `_flags.json` |
+| `sql/schema/fulltext_tables.sql` / `sql/migrations/003_add_semantic_paragraphs.sql` | Semantic layer DDL (`document_paragraphs`, `document_parses`) |
+| `python/fulltext_verify_text.py` | **Acceptance gate** — docx→parsed text-preservation check (nonzero exit on genuine loss) |
 
 ## Semantic layer policies
 
@@ -324,3 +412,80 @@ policy leaves annex/PRST-body content `null` and correctly splits the recommend-
 ation into operative sub-items, so our totals differ by design; text is preserved
 either way. Outside those two documents the overlap agrees to within ±2
 paragraphs (an opening-formula/chapeau boundary rounding).
+
+## Semantic layer schema (migration 003)
+
+The frozen semantic layer lives in two tables (`sql/schema/fulltext_tables.sql`,
+delta `sql/migrations/003_add_semantic_paragraphs.sql`). Both are **rebuildable
+from `document_paragraphs_raw`** — the loader (`fulltext_parse.py --to-db`) is the
+only writer, and it delete-then-inserts per `(symbol_normalized, lang)`.
+
+### `digitallibrary.document_paragraphs`
+
+One row per parsed element, in document order. It is the JSON `elements[]` array
+flattened into columns, plus loader-computed `position`/`id` and provenance.
+
+- **`position`** — 0-based element index in parsed order (the row's ordinal in
+  `elements[]`). This is **not** a raw position; the mapping back to the raw layer
+  is `raw_positions`.
+- **`id`** — `uuid5(NAMESPACE_URL, '<symbol_normalized>:<lang>:<position>')`,
+  computed by the loader. Deterministic and stable across re-parses as long as
+  element order is stable; a globally-unique handle for downstream joins (unique
+  index `uq_document_paragraphs_id`).
+- **`raw_positions`** (`INTEGER[]`, never empty) — the `document_paragraphs_raw.position`
+  values this element consumed. This is the **provenance / accounting link**: every
+  raw position is consumed by exactly one element's `raw_positions[]` or listed in
+  the ledger's `dropped[]`. WP hard-broken clauses merge several raw rows into one
+  element, so an array (not a scalar) is required.
+- **`type`** — `frontmatter|title|opening|heading|paragraph|footnote|divider|
+  vote_record|table|signature`. **`subtype`** — `masthead|subres|instrument|
+  amendment` where applicable, else `NULL`.
+- **`paragraph_type`** — `preambular|operative`, **resolution-body only** (main
+  section + scoped instrument annex); `NULL` everywhere else even when numbered
+  (partial index `idx_document_paragraphs_ptype`). See the labelling policies above.
+- **`section`** (`main|annex|appendix`), **`annex_index`**, **`text_index`**
+  (omnibus/multi-text block ordinal), **`level`**/**`heading_level`**,
+  **`prefix`** (literal marker as printed), **`lead_verb`**, **`text`** (cleaned).
+- **`inferred_operative`** — `true` for the source-dropped-number rescue.
+- **`vote`** / **`vote_summary`** — populated on `vote_record` rows only.
+  **`hyperlinks`** / **`note_ids`** — JSONB arrays carried from raw (`[]` when none).
+- **`parser_version`**, **`parsed_at`**.
+
+### `digitallibrary.document_parses`
+
+One row per parsed `(symbol_normalized, lang)` — a parse ledger. Holds
+`parser_version`, `format`, `element_count`, and the parser JSON root `dropped[]`
+and `issues[]` **verbatim** (JSONB), so the accounting invariant is queryable in
+SQL without re-reading the JSON files:
+
+```sql
+-- must equal the raw row count for every doc (0 violations across the corpus):
+SELECT p.symbol_normalized,
+       sum(cardinality(dp.raw_positions)) + jsonb_array_length(p.dropped) AS accounted,
+       (SELECT count(*) FROM digitallibrary.document_paragraphs_raw r
+         WHERE r.symbol_normalized = p.symbol_normalized AND r.lang = p.lang) AS raw_rows
+FROM digitallibrary.document_parses p
+JOIN digitallibrary.document_paragraphs dp USING (symbol_normalized, lang)
+GROUP BY p.symbol_normalized, p.dropped;
+```
+
+`document_files.status = 'parsed'` marks a doc as loaded; every `document_parses`
+row has a matching `parsed` ledger row (loader sets both in the same transaction).
+
+### Idempotency & re-parse
+
+Re-running the loader deletes and re-inserts a document's rows, so it is safe to
+re-run at any time and to top-up incrementally. Because the parser reads the
+**live** `document_paragraphs_raw`, a fresh load can differ slightly from an older
+`parsed_dev/*.json` on disk if the raw layer was re-extracted since that JSON was
+written — the DB is authoritative. (At freeze time this affected exactly the 3
+`Reissued for technical reasons` docs — `S/PRST/2001/9`, `S/PRST/2014/3`,
+`S/RES/1881(2009)` — an upstream extraction artifact, not a parser/loader issue.)
+
+## Downstream: mandates.un.org consumption
+
+`document_paragraphs` / `document_parses` are the digitallibrary-side frozen
+output. Wiring them into the **mandates.un.org unified documents view** (joining
+the semantic paragraphs to the PPB/mandate objects the product renders) is a
+**separate downstream step in the `mandates` repo** — not part of this pipeline.
+This repo's responsibility ends at a clean, queryable semantic layer.

@@ -106,18 +106,33 @@ def docx_words(path: Path) -> Counter:
 
     Runs of a paragraph are joined before tokenising (matches the parser's own
     text, and keeps hyphen-normalisation consistent)."""
+    QFALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
+
+    def walk(el: ET.Element, buf: list[str], c: Counter) -> None:
+        # Skip mc:Fallback: its content duplicates the mc:Choice branch
+        # (the raw extractor likewise processes only one branch).
+        if el.tag == QFALLBACK:
+            return
+        if el.tag == QP:
+            inner: list[str] = []
+            for child in el:
+                walk(child, inner, c)
+            c += words("".join(inner))
+            return
+        if el.tag == QT:
+            buf.append(el.text or "")
+        for child in el:
+            walk(child, buf, c)
+
     c: Counter = Counter()
     with zipfile.ZipFile(path) as z:
         names = z.namelist()
-        if "word/document.xml" in names:
-            root = ET.fromstring(z.read("word/document.xml"))
-            for p in root.iter(QP):
-                c += words("".join(t.text or "" for t in p.iter(QT)))
-        for name in names:
-            if re.search(r"word/(footnotes|endnotes)\.xml$", name):
+        for name in ["word/document.xml"] + [
+            n for n in names if re.search(r"word/(footnotes|endnotes)\.xml$", n)
+        ]:
+            if name in names:
                 root = ET.fromstring(z.read(name))
-                for p in root.iter(QP):
-                    c += words("".join(t.text or "" for t in p.iter(QT)))
+                walk(root, [], c)
     return c
 
 
@@ -207,7 +222,7 @@ def fetch_targets(limit: int | None, symbols: list[str] | None) -> list[tuple[st
     (native docx)."""
     sql = ("SELECT symbol_normalized, format, "
            "COALESCE(converted_path, archive_path) AS docx_path "
-           "FROM digitallibrary.document_files WHERE status = 'extracted' ")
+           "FROM digitallibrary.document_files WHERE status IN ('extracted','parsed') ")
     params: list[object] = []
     if symbols:
         sql += "AND symbol_normalized = ANY(%s) "

@@ -23,14 +23,34 @@ Three format families are handled (see fulltext_census.py / the corpus census):
                      consecutive paragraph rows (we merge them).
 
 This is deliberately standalone (mirrors the other python/ scripts): DATABASE_URL
-from .env, short-lived psycopg connection, no new DB tables. The schema is a
-working hypothesis and is expected to be iterated -- deviations from the brief
-are documented in module docstrings and the run report.
+from .env, short-lived psycopg (v3) connections. Targets are documents whose
+document_files.status is 'extracted' or 'parsed' (so a re-parse still finds docs
+already loaded to the semantic DB).
+
+DB MODE (--to-db). The frozen semantic layer lands in two tables added by
+migration 003:
+  - digitallibrary.document_paragraphs — one row per parsed element (the JSON
+    `elements[]`), document order. `id` is uuid5(NAMESPACE_URL,
+    '<symbol_normalized>:<lang>:<position>') where position is the 0-based element
+    index, computed by this loader.
+  - digitallibrary.document_parses     — one row per (symbol,lang): parser_version,
+    format, element_count, and the JSON root `dropped[]`/`issues[]` verbatim, so
+    the accounting invariant stays queryable in SQL.
+Loading is DELETE-then-INSERT per (symbol,lang) in BOTH tables (idempotent /
+re-parsable), batched over short-lived connections of ~20 docs each, mirroring
+fulltext_extract_raw.py's discipline. On success the document_files status is
+advanced 'extracted' -> 'parsed'; on a hard parse/insert failure it is set to
+'parse_failed' with the error recorded (never crashes the batch). An accounting
+failure does NOT fail the load — the doc is still written and the failure is
+recorded in document_parses.issues (and document_paragraphs stays queryable).
+JSON output is written alongside the DB rows unless --db-only is given.
 
 Usage:
-    uv run python python/fulltext_parse.py            # all extracted docs
+    uv run python python/fulltext_parse.py                 # JSON only (all extracted/parsed docs)
     uv run python python/fulltext_parse.py --limit 5
     uv run python python/fulltext_parse.py --symbol A/RES/48/70
+    uv run python python/fulltext_parse.py --to-db         # JSON + semantic DB
+    uv run python python/fulltext_parse.py --db-only        # semantic DB only, no JSON
 """
 
 from __future__ import annotations
@@ -38,9 +58,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import uuid
 from pathlib import Path
 
-from fulltext_common import ARCHIVE_ROOT, get_conn, sanitize_symbol
+from fulltext_common import ARCHIVE_ROOT, get_conn, sanitize_symbol, upsert_document_file
 
 PARSER_VERSION = "sem-v1"
 OUT_DIR = ARCHIVE_ROOT / "parsed_dev"
@@ -1179,10 +1200,17 @@ def _heading_level(lr: LRow) -> int:
 # ---------------------------------------------------------------------------
 
 
-def fetch_targets(limit: int | None, symbol: str | None) -> list[tuple[str, str]]:
+def fetch_targets(limit: int | None, symbol: str | None) -> list[tuple[str, str, str]]:
+    """Return (symbol_normalized, lang, format) for parseable documents.
+
+    Targets any doc whose raw extraction is available: status IN
+    ('extracted', 'parsed'). Including 'parsed' keeps re-parses working after the
+    loader has advanced status (a plain JSON re-run, or a re-load with --to-db,
+    still finds every already-loaded doc).
+    """
     sql = (
-        "SELECT df.symbol_normalized, df.format FROM digitallibrary.document_files df "
-        "WHERE df.status = 'extracted' "
+        "SELECT df.symbol_normalized, df.lang, df.format FROM digitallibrary.document_files df "
+        "WHERE df.status IN ('extracted', 'parsed') "
     )
     params: list[object] = []
     if symbol:
@@ -1194,20 +1222,95 @@ def fetch_targets(limit: int | None, symbol: str | None) -> list[tuple[str, str]
         params.append(limit)
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
-        return [(r[0], r[1]) for r in cur.fetchall()]
+        return [(r[0], r[1] or "en", r[2]) for r in cur.fetchall()]
 
 
-def fetch_rows(conn, symbol: str) -> list[dict]:
+def fetch_rows(conn, symbol: str, lang: str = "en") -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(
             "SELECT position, kind, text, style_id, style_name, numbering, props, "
             "table_cell, hyperlinks, footnote_ref "
             "FROM digitallibrary.document_paragraphs_raw "
-            "WHERE symbol_normalized = %s ORDER BY position",
-            [symbol],
+            "WHERE symbol_normalized = %s AND lang = %s ORDER BY position",
+            [symbol, lang],
         )
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Semantic DB loader (migration 003 tables)
+# ---------------------------------------------------------------------------
+
+# Insert column order for digitallibrary.document_paragraphs. `id` and `position`
+# are computed by the loader; the rest are read off each parsed element.
+_PARA_COLUMNS = (
+    "symbol_normalized", "lang", "position", "id", "type", "subtype", "section",
+    "annex_index", "text_index", "paragraph_type", "level", "heading_level",
+    "prefix", "lead_verb", "text", "raw_positions", "inferred_operative",
+    "vote", "vote_summary", "hyperlinks", "note_ids", "parser_version",
+)
+_PARA_INSERT = (
+    f"INSERT INTO digitallibrary.document_paragraphs ({', '.join(_PARA_COLUMNS)}) "
+    f"VALUES ({', '.join(['%s'] * len(_PARA_COLUMNS))})"
+)
+
+
+def element_uuid(symbol: str, lang: str, position: int) -> uuid.UUID:
+    """Deterministic element id: uuid5(NAMESPACE_URL, '<symbol>:<lang>:<position>').
+
+    `position` is the 0-based element index in parsed order. Stable across
+    re-parses as long as element ordering is stable.
+    """
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"{symbol}:{lang}:{position}")
+
+
+def load_document(conn, symbol: str, lang: str, fmt: str, result: dict) -> int:
+    """Delete-then-insert one parsed document into the semantic tables.
+
+    Writes document_paragraphs (one row per element, 0-based position) and one
+    document_parses ledger row (element_count + JSON root dropped[]/issues[]).
+    Caller owns the transaction (commit/rollback per doc). Returns element count.
+    """
+    elements = result["elements"]
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM digitallibrary.document_paragraphs "
+            "WHERE symbol_normalized = %s AND lang = %s",
+            [symbol, lang],
+        )
+        cur.execute(
+            "DELETE FROM digitallibrary.document_parses "
+            "WHERE symbol_normalized = %s AND lang = %s",
+            [symbol, lang],
+        )
+        rows = []
+        for pos, el in enumerate(elements):
+            vote = el.get("vote")
+            vote_summary = el.get("vote_summary")
+            rows.append((
+                symbol, lang, pos, str(element_uuid(symbol, lang, pos)),
+                el["type"], el.get("subtype"), el.get("section", "main"),
+                el.get("annex_index"), el.get("text_index", 1),
+                el.get("paragraph_type"), el.get("level"), el.get("heading_level"),
+                el.get("prefix"), el.get("lead_verb"), el["text"],
+                el["positions"], bool(el.get("inferred_operative", False)),
+                json.dumps(vote) if vote is not None else None,
+                json.dumps(vote_summary) if vote_summary is not None else None,
+                json.dumps(el.get("hyperlinks") or []),
+                json.dumps(el.get("note_ids") or []),
+                result["parser_version"],
+            ))
+        if rows:
+            cur.executemany(_PARA_INSERT, rows)
+        cur.execute(
+            "INSERT INTO digitallibrary.document_parses "
+            "(symbol_normalized, lang, parser_version, format, element_count, dropped, issues) "
+            "VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)",
+            [symbol, lang, result["parser_version"], fmt, len(elements),
+             json.dumps(result.get("dropped", [])), json.dumps(result.get("issues", []))],
+        )
+    return len(elements)
 
 
 def _check_accounting(result: dict, raw_rows: list[dict]) -> str | None:
@@ -1231,44 +1334,85 @@ def _check_accounting(result: dict, raw_rows: list[dict]) -> str | None:
     return None
 
 
+BATCH_DOCS = 20  # docs per short-lived DB connection (mirrors fulltext_extract_raw.py)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Semantic full-text parser (v1)")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--symbol")
     ap.add_argument("--out", default=str(OUT_DIR))
+    ap.add_argument("--to-db", action="store_true",
+                    help="load the semantic DB tables (migration 003) alongside JSON")
+    ap.add_argument("--db-only", action="store_true",
+                    help="load the semantic DB only; skip writing JSON files")
     args = ap.parse_args()
 
+    to_db = args.to_db or args.db_only
+    write_json = not args.db_only
+
     out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if write_json:
+        out_dir.mkdir(parents=True, exist_ok=True)
 
     targets = fetch_targets(args.limit, args.symbol)
-    print(f"Parsing {len(targets)} documents -> {out_dir}")
+    dest = []
+    if write_json:
+        dest.append(str(out_dir))
+    if to_db:
+        dest.append("db(document_paragraphs, document_parses)")
+    print(f"Parsing {len(targets)} documents -> {', '.join(dest) or '(nothing)'}")
 
     n_ok = 0
     n_acct_fail = 0
-    with get_conn() as conn:
-        for k, (symbol, fmt) in enumerate(targets, 1):
-            raw_rows = fetch_rows(conn, symbol)
-            try:
-                result = parse_document(symbol, fmt, raw_rows)
-            except Exception as exc:  # never crash the batch on one doc
-                print(f"  ! {symbol}: {type(exc).__name__}: {exc}")
-                continue
-            err = _check_accounting(result, raw_rows)
-            if err:
-                n_acct_fail += 1
-                result.setdefault("issues", []).append(
-                    {"position": -1, "problem": "accounting", "text_head": err})
-                print(f"  ! {symbol}: ACCOUNTING {err}")
-            out_path = out_dir / f"{sanitize_symbol(symbol)}.json"
-            out_path.write_text(json.dumps(result, ensure_ascii=False, indent=1),
-                                encoding="utf-8")
-            n_ok += 1
-            if k % 25 == 0:
-                print(f"  parsed {k}/{len(targets)}")
+    n_loaded = 0
+    n_failed = 0
+    total_elems = 0
+    for start in range(0, len(targets), BATCH_DOCS):
+        chunk = targets[start:start + BATCH_DOCS]
+        with get_conn() as conn:
+            for symbol, lang, fmt in chunk:
+                try:
+                    raw_rows = fetch_rows(conn, symbol, lang)
+                    result = parse_document(symbol, fmt, raw_rows)
+                    err = _check_accounting(result, raw_rows)
+                    if err:
+                        n_acct_fail += 1
+                        result.setdefault("issues", []).append(
+                            {"position": -1, "problem": "accounting", "text_head": err})
+                        print(f"  ! {symbol}: ACCOUNTING {err}")
+                    if write_json:
+                        out_path = out_dir / f"{sanitize_symbol(symbol)}.json"
+                        out_path.write_text(
+                            json.dumps(result, ensure_ascii=False, indent=1),
+                            encoding="utf-8")
+                    if to_db:
+                        total_elems += load_document(conn, symbol, lang, fmt, result)
+                        upsert_document_file(conn, symbol, lang, status="parsed", error=None)
+                        conn.commit()
+                        n_loaded += 1
+                    n_ok += 1
+                except Exception as exc:  # never crash the batch on one doc
+                    if to_db:
+                        conn.rollback()
+                        try:
+                            upsert_document_file(
+                                conn, symbol, lang, status="parse_failed",
+                                error=f"{type(exc).__name__}: {exc}"[:500])
+                            conn.commit()
+                        except Exception:
+                            conn.rollback()
+                    n_failed += 1
+                    print(f"  ! {symbol}: {type(exc).__name__}: {exc}")
+        done = start + len(chunk)
+        if done % 100 == 0 or done == len(targets):
+            print(f"  parsed {done}/{len(targets)} ok={n_ok} loaded={n_loaded} failed={n_failed}")
 
-    print(f"\nDone: {n_ok} written, {n_acct_fail} accounting failures.")
-    return 0
+    print(f"\nDone: {n_ok} parsed, {n_acct_fail} accounting failures, "
+          f"{n_failed} failed.")
+    if to_db:
+        print(f"Loaded {n_loaded} docs, {total_elems} element rows into the semantic DB.")
+    return 0 if n_failed == 0 else 1
 
 
 if __name__ == "__main__":

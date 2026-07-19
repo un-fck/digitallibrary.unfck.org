@@ -65,3 +65,69 @@ CREATE TABLE IF NOT EXISTS digitallibrary.document_paragraphs_raw (
 
 CREATE INDEX IF NOT EXISTS idx_document_paragraphs_raw_symbol
   ON digitallibrary.document_paragraphs_raw (symbol_normalized, lang);
+
+-- ---------------------------------------------------------------------------
+-- Semantic layer (migration 003). ONE row per parsed element in document order.
+--
+-- Produced by python/fulltext_parse.py (parser_version 'sem-v1') from
+-- document_paragraphs_raw. The parser classifies every raw paragraph into
+-- exactly one semantic element and enforces a hard accounting invariant: every
+-- raw position is consumed by one element's raw_positions[] or appears in the
+-- per-document parse ledger's dropped[] (see document_parses). Loading is
+-- delete-then-insert per (symbol_normalized, lang), so it is idempotent and
+-- re-parses cleanly. The SSD archive -> document_paragraphs_raw remains the
+-- re-derivable substrate; this table is disposable and can be rebuilt from raw.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS digitallibrary.document_paragraphs (
+  symbol_normalized TEXT    NOT NULL,             -- joins document_files / document_paragraphs_raw
+  lang              TEXT    NOT NULL DEFAULT 'en',
+  position          INTEGER NOT NULL,             -- 0-based element index in parsed order (NOT the raw position)
+  id                UUID    NOT NULL,             -- uuid5(NAMESPACE_URL, '<symbol_normalized>:<lang>:<position>'), computed by the loader; stable across re-parses while element order is stable
+  type              TEXT    NOT NULL,             -- frontmatter|title|opening|heading|paragraph|footnote|divider|vote_record|table|signature
+  subtype           TEXT,                         -- masthead|subres|instrument|amendment (element-type-specific; NULL otherwise)
+  section           TEXT    NOT NULL DEFAULT 'main',  -- main|annex|appendix
+  annex_index       SMALLINT,                     -- 1-based annex ordinal (only on section='annex' elements)
+  text_index        SMALLINT NOT NULL DEFAULT 1,  -- multi-text/omnibus block ordinal within one physical file (1 = single text)
+  paragraph_type    TEXT,                         -- preambular|operative — resolution-body machinery ONLY (main section + scoped instrument annex); NULL everywhere else even when numbered
+  level             SMALLINT,                     -- clause nesting: opening=0, top-level=1, subparagraph 2/3
+  heading_level     SMALLINT,                     -- heading depth (H1..H4 / annex/subres headings)
+  prefix            TEXT,                         -- literal marker as printed ('1.', '(a)', '(iv)'); NULL for inferred/unnumbered
+  lead_verb         TEXT,                         -- preambular participle ('Recalling also') or operative verb ('Requests')
+  text              TEXT    NOT NULL,             -- cleaned element text (tabs/NBSP collapsed); table cells joined with ' | '
+  raw_positions     INTEGER[] NOT NULL,           -- provenance: document_paragraphs_raw.position values consumed by this element (>=1, never empty)
+  inferred_operative BOOLEAN NOT NULL DEFAULT false,  -- true when a source-dropped operative number was rescued (auditable/reversible; no invented prefix)
+  vote              JSONB,                        -- vote_record only: {in_favour:[country],against:[],abstaining:[],...}
+  vote_summary      JSONB,                        -- vote_record only: {in_favour:int,against:int,abstaining:int} when a tally line was parsed
+  hyperlinks        JSONB,                        -- [{text,url}] carried from raw; [] when none
+  note_ids          JSONB,                        -- [int] footnote ids referenced/defined; [] when none
+  parser_version    TEXT    NOT NULL,             -- e.g. 'sem-v1'
+  parsed_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (symbol_normalized, lang, position)
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_paragraphs_symbol
+  ON digitallibrary.document_paragraphs (symbol_normalized, lang);
+CREATE INDEX IF NOT EXISTS idx_document_paragraphs_ptype
+  ON digitallibrary.document_paragraphs (paragraph_type) WHERE paragraph_type IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_document_paragraphs_id
+  ON digitallibrary.document_paragraphs (id);
+
+-- ---------------------------------------------------------------------------
+-- Per-document parse ledger: one row per (symbol_normalized, lang) parsed.
+-- Keeps the accounting invariant queryable in SQL — dropped[]/issues[] are the
+-- parser JSON root arrays verbatim, so
+--   (count of raw positions) = (sum of raw_positions lengths in document_paragraphs)
+--                              + jsonb_array_length(dropped)
+-- can be checked without re-reading the JSON files.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS digitallibrary.document_parses (
+  symbol_normalized TEXT    NOT NULL,
+  lang              TEXT    NOT NULL DEFAULT 'en',
+  parser_version    TEXT    NOT NULL,
+  format            TEXT,                         -- docx|doc|wpd (source format the parse ran against)
+  element_count     INTEGER NOT NULL,             -- number of document_paragraphs rows for this doc
+  dropped           JSONB   NOT NULL DEFAULT '[]'::jsonb,  -- [{position:int,reason:str}] raw positions intentionally dropped (empties, page artifacts, layout cells)
+  issues            JSONB   NOT NULL DEFAULT '[]'::jsonb,  -- [{position:int,problem:str,text_head:str}] parser-flagged anomalies incl. accounting failures
+  parsed_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (symbol_normalized, lang)
+);
