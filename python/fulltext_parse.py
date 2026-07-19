@@ -61,9 +61,13 @@ import re
 import uuid
 from pathlib import Path
 
+import fulltext_verbs as fv
 from fulltext_common import ARCHIVE_ROOT, get_conn, sanitize_symbol, upsert_document_file
 
-PARSER_VERSION = "sem-v1"
+# sem-v2 adds the action-verb annotation pass (migration 004): a nested `action`
+# object on each operative/preambular element, flattened to the action_*/assignee_*
+# columns by the loader. Element construction / accounting are unchanged.
+PARSER_VERSION = "sem-v2"
 OUT_DIR = ARCHIVE_ROOT / "parsed_dev"
 
 # Opt-in source-defect rescue: when a resolution drops an operative NUMBER at
@@ -619,6 +623,67 @@ def _footnote_text(raw_text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Action-verb annotation pass (migration 004 / sem-v2)
+# ---------------------------------------------------------------------------
+
+
+def annotate_actions(elements: list[dict]) -> None:
+    """Attach a nested ``action`` dict to each operative/preambular element in place.
+
+    Runs the deterministic action-verb parser (``fulltext_verbs.extract_action``)
+    over the element sequence in document order, resolving each clause's *chapeau*
+    context EXACTLY as ``fulltext_verbs_eval.run_parser_over_doc`` does (this is the
+    single source of truth for that resolution — keep the two in lockstep):
+
+      * only ``paragraph_type IN ('operative','preambular')`` elements are annotated;
+        every other element (PRST/statement bodies, annexes, headings, votes, and
+        every ``paragraph_type IS NULL`` element) is left untouched — no ``action`` key;
+      * a top-level (level<=1) clause that does NOT end in ':' resets the inherited
+        chapeau context;
+      * the row a sub-item inherits from is the most recent operative element ending
+        in ':' at a shallower level — with ``governing_verb_for_children`` overriding
+        the line's own leading verb for declaration ('We decide to:') and passive
+        personified ('... are encouraged ... :') chapeaux.
+
+    Elements whose ``extract_action`` returns ``None`` (noun-phrase budget sub-items,
+    chapeau-less continuations, non-action headings that slipped through) get no
+    ``action`` key and so load as all-NULL action columns. The Chapter-VII marker
+    ('Acting under Chapter VII …') IS attached (it has a context_marker) even though
+    its normalized verb is None. The pass never alters ``text``/``positions`` — it is
+    purely additive, so the accounting invariant and text-preservation gate are
+    unaffected.
+    """
+    chapeau: dict | None = None
+    for el in elements:
+        ptype = el.get("paragraph_type")
+        if ptype not in ("operative", "preambular"):
+            continue
+        text = el.get("text") or ""
+        level = el.get("level")
+        prefix = el.get("prefix")
+        is_colon = text.rstrip().endswith(":")
+        lvl = level if level is not None else (1 if ptype == "operative" else 0)
+        # a new top-level, non-chapeau clause resets inherited context
+        if lvl <= 1 and not is_colon:
+            chapeau = None
+        action = fv.extract_action(
+            text, paragraph_type=ptype, level=level, prefix=prefix,
+            chapeau_action=chapeau,
+        )
+        # this row becomes the chapeau for following sub-items if it opens a list;
+        # a governing verb overrides the line's own leading verb for what children
+        # inherit ('We decide to:' -> decide; '... are encouraged to ... :' -> encourage).
+        gov = fv.governing_verb_for_children(text)
+        if gov is not None:
+            chapeau = gov
+        elif (action and not action.get("inherited") and is_colon
+                and action.get("normalized")):
+            chapeau = action
+        if action is not None:
+            el["action"] = action
+
+
+# ---------------------------------------------------------------------------
 # Main per-document parse
 # ---------------------------------------------------------------------------
 
@@ -1058,6 +1123,10 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
                                      paragraph_type=None, text=c, text_index=text_index))
         i += 1
 
+    # sem-v2: annotate operative/preambular elements with their action verb in a
+    # cleanly separable pass (additive; never touches text/positions/accounting).
+    annotate_actions(elements)
+
     result = {
         "symbol": symbol,
         "format": fmt,
@@ -1249,6 +1318,12 @@ _PARA_COLUMNS = (
     "annex_index", "text_index", "paragraph_type", "level", "heading_level",
     "prefix", "lead_verb", "text", "raw_positions", "inferred_operative",
     "vote", "vote_summary", "hyperlinks", "note_ids", "parser_version",
+    # migration 004: flattened action-verb annotation (NULL unless the element
+    # carries a nested `action` object, i.e. an annotated operative/preambular clause)
+    "action_verb", "action_verb_normalized", "action_category", "action_force",
+    "action_sentiment", "action_bindingness", "action_budget_relevant",
+    "action_modifiers", "assignee", "assignee_head_noun", "assignee_class",
+    "action_inherited", "action_context_marker",
 )
 _PARA_INSERT = (
     f"INSERT INTO digitallibrary.document_paragraphs ({', '.join(_PARA_COLUMNS)}) "
@@ -1288,6 +1363,8 @@ def load_document(conn, symbol: str, lang: str, fmt: str, result: dict) -> int:
         for pos, el in enumerate(elements):
             vote = el.get("vote")
             vote_summary = el.get("vote_summary")
+            action = el.get("action")
+            assignee = action.get("assignee") if action else None
             rows.append((
                 symbol, lang, pos, str(element_uuid(symbol, lang, pos)),
                 el["type"], el.get("subtype"), el.get("section", "main"),
@@ -1300,6 +1377,20 @@ def load_document(conn, symbol: str, lang: str, fmt: str, result: dict) -> int:
                 json.dumps(el.get("hyperlinks") or []),
                 json.dumps(el.get("note_ids") or []),
                 result["parser_version"],
+                # migration 004: flattened action annotation (all NULL when no action)
+                action.get("verb") if action else None,
+                action.get("normalized") if action else None,
+                action.get("category") if action else None,
+                action.get("force") if action else None,
+                action.get("sentiment") if action else None,
+                action.get("bindingness") if action else None,
+                action.get("budget_relevant") if action else None,
+                json.dumps(action["modifiers"]) if action and action.get("modifiers") else None,
+                assignee.get("verbatim") if assignee else None,
+                assignee.get("head_noun") if assignee else None,
+                assignee.get("addressee_class") if assignee else None,
+                action.get("inherited") if action else None,
+                action.get("context_marker") if action else None,
             ))
         if rows:
             cur.executemany(_PARA_INSERT, rows)

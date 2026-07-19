@@ -262,11 +262,13 @@ uv run python python/fulltext_extract_raw.py --force    # also re-extract 'extra
 
 ### 6. Semantic parse → JSON + semantic DB
 
-`python/fulltext_parse.py` (parser_version `sem-v1`) classifies the raw rows into
-semantic elements. It always writes one JSON per doc to `parsed_dev/`; with
-`--to-db` it *also* loads the two semantic tables (migration 003) and advances
-status `extracted → parsed` (hard failures `parse_failed`). It targets docs with
-status `extracted` **or** `parsed`, so a re-parse still finds already-loaded docs.
+`python/fulltext_parse.py` (parser_version `sem-v2`) classifies the raw rows into
+semantic elements **and annotates each operative/preambular element with its action
+verb** (see *Action-verb annotation (migration 004)* below). It always writes one
+JSON per doc to `parsed_dev/`; with `--to-db` it *also* loads the two semantic tables
+(migrations 003 + 004 columns) and advances status `extracted → parsed` (hard
+failures `parse_failed`). It targets docs with status `extracted` **or** `parsed`, so
+a re-parse still finds already-loaded docs.
 
 ```bash
 uv run python python/fulltext_parse.py                  # JSON only (parsed_dev/*.json)
@@ -315,6 +317,9 @@ uv run python python/fulltext_verify_text.py
 | `python/fulltext_parse_metrics.py` | Accounting/metrics report + cross-check vs legacy `mandates.paragraphs` |
 | `python/fulltext_review.py` | Two-column raw\|parsed HTML review harness + `_flags.json` |
 | `sql/schema/fulltext_tables.sql` / `sql/migrations/003_add_semantic_paragraphs.sql` | Semantic layer DDL (`document_paragraphs`, `document_parses`) |
+| `sql/migrations/004_action_verbs.sql` | Action-verb annotation columns (`action_*`, `assignee_*`) — additive delta on `document_paragraphs` |
+| `python/fulltext_verbs.py` | Deterministic action-verb parser (`extract_action`); stdlib-only, `__main__` self-test |
+| `python/fulltext_verbs_eval.py` | Eval harness: `extract_action` vs legacy `mandates.paragraph_mandates` (coverage / verb / category / assignee agreement) |
 | `python/fulltext_verify_text.py` | **Acceptance gate** — docx→parsed text-preservation check (nonzero exit on genuine loss) |
 
 ## Semantic layer policies
@@ -481,6 +486,140 @@ re-run at any time and to top-up incrementally. Because the parser reads the
 written — the DB is authoritative. (At freeze time this affected exactly the 3
 `Reissued for technical reasons` docs — `S/PRST/2001/9`, `S/PRST/2014/3`,
 `S/RES/1881(2009)` — an upstream extraction artifact, not a parser/loader issue.)
+
+## Action-verb annotation (migration 004)
+
+`parser_version = "sem-v2"` adds a **deterministic action-verb annotation** on top
+of the semantic elements. A separable pass (`fulltext_parse.annotate_actions`) runs
+the stdlib-only parser in `python/fulltext_verbs.py` (`extract_action`) over the
+element sequence and flattens its output onto the `action_*` / `assignee_*` columns
+added by `sql/migrations/004_action_verbs.sql`. It **replaces the legacy LLM
+extraction** (`mandates.paragraph_mandates`) with a declarative, fully
+unit-testable lexicon — no model calls, no I/O, stateless per paragraph.
+
+The pass is **purely additive**: it never alters `text`, `positions`, or the
+accounting invariant, so the text-preservation gate (`fulltext_verify_text.py`) and
+the 003 accounting still hold unchanged. It runs on `A/RES`, `S/RES`, `E/RES`,
+`A/HRC/RES` bodies and any scoped instrument annex.
+
+### What gets annotated
+
+Only rows with `paragraph_type IN ('operative','preambular')` — i.e. **resolution
+body clauses**. Every other element (PRST/statement bodies, non-instrument annexes,
+headings, frontmatter, votes, and **every** `paragraph_type IS NULL` element) keeps
+all `action_*`/`assignee_*` columns `NULL`. Within the body, a clause that carries
+no leading action (a noun-phrase budget sub-item, a chapeau-less continuation) also
+stays `NULL`. Coverage on the loaded corpus: **operative 98.7 %**, **preambular
+98.3 %** (excluding the `type='opening'` formula lines, which are preambular but
+verb-less). Zero action columns are ever set on a `paragraph_type IS NULL` row.
+
+### Columns
+
+- **`action_verb`** — verbatim leading surface form as printed (`Requests`,
+  `Also decides`, `Strongly condemns`).
+- **`action_verb_normalized`** — legacy-compatible lemma (`request`, `decide`,
+  `take note`, `call upon`, `express concern`). Partial index
+  `idx_document_paragraphs_action_verb` (`WHERE ... IS NOT NULL`).
+- **`action_category`** — the 5-category spine (below).
+- **`action_force`**, **`action_sentiment`**, **`action_bindingness`**,
+  **`action_budget_relevant`** — the orthogonal dimensions (below).
+- **`action_modifiers`** (`JSONB`) — `[{kind,text}]` leading adverbs/connectives/
+  qualifiers peeled off the head (`{"kind":"repetition","text":"also"}`,
+  `{"kind":"intensity","text":"strongly"}`, `{"kind":"qualifier","text":"with
+  concern"}`).
+- **`assignee`**, **`assignee_head_noun`**, **`assignee_class`** — the addressee of
+  a directive clause: the verbatim span between the verb and the ` to `-infinitive,
+  its head noun, and its class. Partial index
+  `idx_document_paragraphs_assignee_class` (`WHERE ... IS NOT NULL`). Classes:
+  `secretary-general | special_procedure | secretariat_entity | member_states |
+  un_system | un_body | ngo_other | unclear`.
+- **`action_inherited`** — `true` when a sub-item inherits its chapeau's governing
+  verb (below).
+- **`action_context_marker`** — `'chapter_vii'` for an `Acting under Chapter VII …`
+  clause; the clause is annotated but `action_verb_normalized` is `NULL` (it is a
+  context marker, not a verb).
+
+The full nested `action` object (including `compound`/`secondary_verbs`,
+`infinitive_verb`, `context_dependent`) is also written into each element in the
+`parsed_dev/*.json` output under an `"action"` key, kept nested to keep the JSON
+tidy; the DB carries the flat subset above.
+
+### Lexicon dimension model
+
+The **5-category spine** (legacy-compatible, ~Searle illocutionary types) is
+carried alongside **orthogonal dimensions** so callers are not forced through a
+single axis. One verb = one lexicon entry with all dimensions:
+
+| category | illocution | force (0–5) | sentiment | bindingness | budget | addressee | representative verbs |
+|----------|-----------|-------------|-----------|-------------|--------|-----------|----------------------|
+| `observing` | assertive / representative | 0 | 0 | contextual | no | no | note, take note, recognize, acknowledge, consider, confirm |
+| `reinforcing` | anaphora / emphasis operator | 0 | 0 | contextual | no | no | reaffirm, recall, reiterate, emphasize, stress, underline |
+| `evaluative` | expressive | 0–1 | +1 / −1 | contextual | no | no | welcome, commend, appreciate (+1); condemn, deplore, regret, be concerned (−1) |
+| `deciding` | commissive / declarative | 3–5 | 0 / +1 | **binding** | **yes** | some | decide, approve, adopt, establish, authorize, appropriate (5); endorse, resolve, agree (4); pledge, commit (3) |
+| `directive` | directive | 1–5 | 0 | hortatory* | budget on `request`/`direct` | **yes** | demand (5); urge (4); request, call upon, call on (3); recommend, appeal (2); encourage, invite (1) |
+
+\* `directive` is `hortatory` by default; `direct` is `binding`. `force` is the
+directive/deciding **spine ordinal** (higher = stronger); `observing`/`reinforcing`/
+`evaluative` sit at 0 by design. `sentiment` is carried on evaluative verbs and on
+carrier verbs (`express concern` → −1, `expresses appreciation` → `appreciate` +1;
+`notes/takes note with appreciation/concern` sets ±1). A handful of genuinely
+context-dependent verbs (`recognize`, `note`, `stress`, `emphasize`, `affirm`,
+`consider`, …) carry a `context_dependent` flag in the JSON (not a DB column).
+
+### Chapeau inheritance
+
+Enumerated sub-items are governed by their chapeau. The annotation pass resolves
+this exactly as `fulltext_verbs_eval.run_parser_over_doc` does (the two are kept in
+lockstep — that eval is the single source of truth for the resolution logic):
+
+- the chapeau context is the **most recent operative element ending in `:` at a
+  shallower level**; a top-level (`level<=1`) clause NOT ending in `:` **resets** it;
+- a sub-item with no finite verb of its own (a `To <verb> …` infinitive, a lowercase
+  gerund continuation, a bare noun-phrase point) **inherits** the chapeau's verb and
+  assignee, with `action_inherited = true`;
+- **`governing_verb_for_children`** overrides the chapeau line's *own* leading verb
+  for two declaration idioms: `… We decide to:` (children inherit `decide`) and the
+  passive personified `Governments … are encouraged to … :` (children inherit
+  `encourage`).
+
+On the corpus this fires on **4,431** inherited sub-item rows (e.g. `A/RES/80/184`
+item 2 `Urges Member States … to:` → sub-items (a)–(t) all inherit
+`urge`/`directive`/`member_states`).
+
+### PRST exclusion
+
+Presidential statements (`S/PRST`, `A/HRC/PRST`) have **no `paragraph_type`** — their
+quoted body is a *statement*, not preambular/operative resolution structure — so they
+are **never annotated** by design (an HRC PRST that quotes a Council resolution
+verbatim with a `"The Human Rights Council,` opening is the exception and gets normal
+labelling, hence normal annotation). A bespoke PRST action path is future work.
+
+### Evaluation vs the legacy LLM
+
+`python/fulltext_verbs_eval.py` scores `extract_action` against the legacy
+`mandates.paragraph_mandates` ground truth over the 56 overlap documents, joining by
+text similarity (positions differ between corpora). Latest run:
+
+- **coverage** — operative **97.6 %**, preambular **94.9 %** (own extracted verb,
+  incl. chapeau-inherited);
+- **normalized verb agreement** — **97.5 %** (exact and lemma);
+- **category agreement** — **98.3 %**;
+- **assignee head-noun agreement** — 82.9 % (directive rows, both sides present).
+
+Top residual disagreements are legacy normalization choices, not errors: `note` vs
+`take note` (24, the DGACM-principled split), `express` vs `appreciate` (7, legacy
+collapses `expresses appreciation`), `be concerned` vs `express concern` (6, the
+carrier/adjectival split) — the parser is internally consistent on each.
+
+### Follow-up ideas
+
+- **Mid-paragraph secondary mandates.** Today only the clause's *leading* action is
+  extracted; a clause can carry a second directive later in the sentence
+  (`… and requests the Secretary-General to …`). The `compound`/`secondary_verbs`
+  fields already capture a leading `V1 and V2`, but not a mid-sentence second mandate.
+- **PRST bespoke path.** PRST bodies are unannotated; a statement-specific extractor
+  (their `The Council reaffirms … / demands …` sentences carry real illocutionary
+  force) would extend coverage to the ~PRST families.
 
 ## Downstream: mandates.un.org consumption
 

@@ -113,6 +113,36 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_document_paragraphs_id
   ON digitallibrary.document_paragraphs (id);
 
 -- ---------------------------------------------------------------------------
+-- Action-verb annotation (migration 004). Flattens the nested `action` object
+-- produced by python/fulltext_verbs.extract_action (the deterministic action-verb
+-- parser) onto each element. Written by fulltext_parse.py --to-db (parser_version
+-- 'sem-v2'). Populated ONLY on paragraph_type IN ('operative','preambular') rows
+-- (resolution-body clauses); NULL everywhere else, and NULL on body clauses that
+-- carry no action (noun-phrase budget sub-items, chapeau-less continuations).
+-- ---------------------------------------------------------------------------
+ALTER TABLE digitallibrary.document_paragraphs
+  ADD COLUMN IF NOT EXISTS action_verb            TEXT,     -- verbatim leading surface form ('Requests', 'Also decides')
+  ADD COLUMN IF NOT EXISTS action_verb_normalized TEXT,     -- legacy-compatible lemma ('request', 'take note', 'call upon')
+  ADD COLUMN IF NOT EXISTS action_category        TEXT,     -- observing|reinforcing|evaluative|deciding|directive
+  ADD COLUMN IF NOT EXISTS action_force           SMALLINT, -- 0-5 ordinal on the directive/deciding spine
+  ADD COLUMN IF NOT EXISTS action_sentiment       SMALLINT, -- +1 / 0 / -1
+  ADD COLUMN IF NOT EXISTS action_bindingness     TEXT,     -- binding|hortatory|contextual
+  ADD COLUMN IF NOT EXISTS action_budget_relevant BOOLEAN,  -- clause type carries budgetary implications
+  ADD COLUMN IF NOT EXISTS action_modifiers       JSONB,    -- [{kind,text}] leading adverbs/connectives/qualifiers stripped off the head
+  ADD COLUMN IF NOT EXISTS assignee               TEXT,     -- verbatim assignee span (directive verbs)
+  ADD COLUMN IF NOT EXISTS assignee_head_noun      TEXT,     -- head noun of the assignee span
+  ADD COLUMN IF NOT EXISTS assignee_class          TEXT,     -- addressee class (secretary-general|member_states|un_body|...)
+  ADD COLUMN IF NOT EXISTS action_inherited        BOOLEAN,  -- true when a sub-item inherits its chapeau's governing verb
+  ADD COLUMN IF NOT EXISTS action_context_marker   TEXT;     -- 'chapter_vii' for 'Acting under Chapter VII ...'
+
+CREATE INDEX IF NOT EXISTS idx_document_paragraphs_action_verb
+  ON digitallibrary.document_paragraphs (action_verb_normalized)
+  WHERE action_verb_normalized IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_document_paragraphs_assignee_class
+  ON digitallibrary.document_paragraphs (assignee_class)
+  WHERE assignee_class IS NOT NULL;
+
+-- ---------------------------------------------------------------------------
 -- Per-document parse ledger: one row per (symbol_normalized, lang) parsed.
 -- Keeps the accounting invariant queryable in SQL — dropped[]/issues[] are the
 -- parser JSON root arrays verbatim, so
