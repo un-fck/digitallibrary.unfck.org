@@ -142,7 +142,7 @@ psql "$DATABASE_URL" -f sql/migrations/002_add_fulltexts.sql
 The fetcher runs **deliberately slowly to avoid ODS soft-blocking** (see Format
 eras above). It targets **≲1200 requests/hour**: ~3 s between requests with ±30%
 jitter, plus a **3–5 min rest break after every ~150 requests**, plus long
-back-offs on any sign of throttling. **Budget about a day of wall-clock time for
+back-offs on any sign of throttling. **Budget roughly 8 hours of wall-clock time for
 the full backfill.** This is by design — start it and leave it running.
 
 Anti-block behaviour, in order of severity:

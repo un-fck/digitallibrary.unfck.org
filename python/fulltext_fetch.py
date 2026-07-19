@@ -18,7 +18,7 @@ not-found, and recovering only minutes later). This script therefore runs
 *deliberately slowly* to stay far below that threshold:
 
   * ~3 s between requests, with ±30% random jitter (no robotic cadence).
-  * A scheduled rest break of 3-5 min after every ~150 requests, regardless of
+  * A scheduled rest break of 1-2 min after every ~500 requests, regardless of
     whether anything failed.
   * Soft-block handling: an html/unknown response is retried up to 2 more times
     (sleeps of 30 s then 120 s) before the symbol is recorded 'unavailable'.
@@ -103,10 +103,10 @@ PROGRESS_EVERY = 25
 STATE_EVERY = 50
 
 # --- Politeness knobs (see module docstring) -------------------------------
-DEFAULT_RATE = 3.0                 # seconds between requests
+DEFAULT_RATE = 1.5                 # seconds between requests
 JITTER_FRAC = 0.30                 # ±30% on every sleep
-REST_EVERY = 150                   # requests between scheduled rest breaks
-REST_MIN, REST_MAX = 180.0, 300.0  # rest break length: 3-5 min
+REST_EVERY = 500                   # requests between scheduled rest breaks
+REST_MIN, REST_MAX = 60.0, 120.0   # rest break length: 1-2 min
 SOFT_BLOCK_SLEEPS = (30.0, 120.0)  # extra retries on html/unknown before 'unavailable'
 BLOCK_PAUSE = 600.0                # 10 min on HTTP 429/403 or connection reset
 CIRCUIT_THRESHOLD = 8              # consecutive block/miss outcomes ⇒ trip
