@@ -19,9 +19,9 @@ safety net:)
   * ~3 s between requests, with ±30% random jitter (no robotic cadence).
   * A scheduled rest break of 1-2 min after every ~500 requests, regardless of
     whether anything failed.
-  * Soft-block handling: an html/unknown response is retried up to 2 more times
-    (sleeps of 15 s then 45 s) before the symbol is recorded 'unavailable'.
-    (html is ODS's plain error page — encoding bug ruled out rate limiting.)
+  * An html/unknown response is recorded 'unavailable' immediately (it is
+    ODS's deterministic error page; whole volumes are genuinely absent, e.g.
+    E/RES 2011). The --recheck-unavailable pass is the second chance.
   * A circuit breaker: 25 consecutive block/miss outcomes ⇒ pause 5 min, then
     15 min on later trips; never exits (consecutive misses are usually genuine
     ODS absence clusters, not blocks).
@@ -107,7 +107,8 @@ DEFAULT_RATE = 1.5                 # seconds between requests
 JITTER_FRAC = 0.30                 # ±30% on every sleep
 REST_EVERY = 500                   # requests between scheduled rest breaks
 REST_MIN, REST_MAX = 60.0, 120.0   # rest break length: 1-2 min
-SOFT_BLOCK_SLEEPS = (15.0, 45.0)   # extra retries on html/unknown before 'unavailable'
+SOFT_BLOCK_SLEEPS = ()             # html = deterministic error page: no in-run retries;
+                                   # --recheck-unavailable is the second chance
 BLOCK_PAUSE = 600.0                # 10 min on HTTP 429/403 or connection reset
 CIRCUIT_THRESHOLD = 25             # consecutive block/miss outcomes ⇒ trip
 CIRCUIT_SLEEPS = (300.0, 900.0)    # trip #1 ⇒ 5 min, trip #2+ ⇒ 15 min (never exits)
@@ -530,12 +531,13 @@ def main() -> int:
                 "ods_url": ods_url, "content_type": None, "error": res.error,
             })
 
-        # A clean success resets the circuit; anything else (miss, failure, or a
-        # target that hit a 429/403/reset) counts toward it.
-        if res.outcome == "fetched" and not block_during:
-            consecutive_block = 0
-        else:
+        # Only real block signals (429/403/connection resets) count toward the
+        # circuit; html misses are genuine ODS absences (often whole missing
+        # volumes, e.g. E/RES 2011) — they are data, not danger.
+        if block_during:
             consecutive_block += 1
+        elif res.outcome == "fetched":
+            consecutive_block = 0
 
         done = i + 1
         if len(buffer) >= FLUSH_EVERY:
