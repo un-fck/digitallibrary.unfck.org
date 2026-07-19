@@ -11,25 +11,24 @@ binary .doc (2000s-2010s), or real .docx (recent). A *failure* returns an HTTP
 200 text/html page (~1.3 KB) — detected here by magic bytes, not Content-Type.
 `t=docx` does NOT convert; it returns the same native file, so we ask for t=doc.
 
-Politeness / anti-block strategy (learned from a 317-doc sample run at 1 req/s,
-after which ODS started soft-blocking — returning the ~1.3 KB "not available"
-HTML page for documents that ARE available, indistinguishable from a genuine
-not-found, and recovering only minutes later). This script therefore runs
-*deliberately slowly* to stay far below that threshold:
+Politeness strategy. (Historical note: an early sample run appeared to get
+soft-blocked; that turned out to be the %20-vs-'+' encoding bug below — no
+rate limiting has ever been observed from ODS. The machinery is kept as a
+safety net:)
 
   * ~3 s between requests, with ±30% random jitter (no robotic cadence).
   * A scheduled rest break of 1-2 min after every ~500 requests, regardless of
     whether anything failed.
   * Soft-block handling: an html/unknown response is retried up to 2 more times
-    (sleeps of 30 s then 120 s) before the symbol is recorded 'unavailable'.
+    (sleeps of 15 s then 45 s) before the symbol is recorded 'unavailable'.
+    (html is ODS's plain error page — encoding bug ruled out rate limiting.)
   * A tiered circuit breaker: 8 consecutive block/miss outcomes ⇒ pause 15 min
     (1st trip), 60 min (2nd trip), then exit cleanly on the 3rd (resumable — we
     would rather stop than hammer).
   * HTTP 429/403 or a connection reset ⇒ an immediate 10-min pause before
     retrying, and it counts toward the circuit breaker.
 
-Net effect: ≲1200 requests/hour. The full backfill takes about a day of
-wall-clock time. That is intentional — run it and forget it.
+Net effect: ~1800-2000 requests/hour; the full backfill takes several hours.
 
 Two structural facts about the corpus, both verified by hand on the sample:
 
@@ -95,7 +94,7 @@ CATALOG_REGEX = r"^(A/RES/|A/DEC/|S/RES/|S/PRST/|E/RES/|E/DEC/|A/HRC/RES/|A/HRC/
 MIN_DATE = "1994-01-01"
 
 # GA/ECOSOC decisions: structurally absent as standalone ODS documents.
-DECISION_FAMILY_RE = re.compile(r"^(A/DEC/|E/DEC/)")
+DECISION_FAMILY_RE = re.compile(r"^(A/DEC/|E/DEC/|A/HRC/(?:RES|PRST)/(?:[1-9]|1[01])/)")
 
 HTTP_TIMEOUT = 60
 MAX_RETRIES = 3          # per-request retries on 5xx / connection error / empty
@@ -108,7 +107,7 @@ DEFAULT_RATE = 1.5                 # seconds between requests
 JITTER_FRAC = 0.30                 # ±30% on every sleep
 REST_EVERY = 500                   # requests between scheduled rest breaks
 REST_MIN, REST_MAX = 60.0, 120.0   # rest break length: 1-2 min
-SOFT_BLOCK_SLEEPS = (30.0, 120.0)  # extra retries on html/unknown before 'unavailable'
+SOFT_BLOCK_SLEEPS = (15.0, 45.0)   # extra retries on html/unknown before 'unavailable'
 BLOCK_PAUSE = 600.0                # 10 min on HTTP 429/403 or connection reset
 CIRCUIT_THRESHOLD = 8              # consecutive block/miss outcomes ⇒ trip
 CIRCUIT_SLEEPS = (900.0, 3600.0)   # trip #1 ⇒ 15 min, trip #2 ⇒ 60 min, trip #3 ⇒ exit
