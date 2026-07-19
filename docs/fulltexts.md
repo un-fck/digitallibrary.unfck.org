@@ -79,8 +79,10 @@ when the parent is already a target or already in the ledger (the parent's file
 covers all parts), otherwise the parent file is fetched and stored under the
 parent `symbol_normalized`. Every run prints how many were collapsed.
 
-Out of scope for now: **~17.7k pre-1994 documents are PDF-only** on ODS (no Word
-source), so text extraction there needs a different (OCR/PDF) path. Deferred.
+**~17.7k pre-1994 documents are PDF-only** on ODS (no Word source). These are
+handled by a separate DETERMINISTIC PDF path (no OCR re-run, no LLM) documented in
+its own section below (**PDF path (pre-1994)**). Bulk fetching them is DEFERRED
+until the Word backfill completes, to avoid contending for the ODS budget.
 
 ## Format eras (empirical)
 
@@ -124,6 +126,9 @@ threshold that triggered the block.
   from doc/wpd, `converted_path` set).
 - `convert_failed` — LibreOffice produced nothing usable; `error` records why.
 - `extracted` — raw paragraphs written (later stage).
+- `no_text_layer` — **PDF path only.** The archived PDF is a pure image scan with
+  no usable embedded text layer (triage class `none`); nothing is extracted. These
+  are the corpus-wide coverage loss for the deterministic PDF path (no OCR is run).
 
 ## Runbook
 
@@ -302,6 +307,150 @@ uv run python python/fulltext_pipeline.py --workers 8
 uv run python python/fulltext_verify_text.py
 ```
 
+## PDF path (pre-1994)
+
+The ~17.7k documents published before 1994 have **no Word source** on ODS — only
+PDFs. This path turns those PDFs into the **same** `document_paragraphs_raw`
+contract the Word path produces, so the **frozen** semantic parser
+(`fulltext_parse.py`, sem-v2) consumes them unchanged through its style-less
+lexical path. It is **fully deterministic — no OCR re-run, no LLM.** It only uses
+the embedded text layer that is already in the PDF (born-digital text, or the OCR
+layer a scan was saved with).
+
+### The three kinds of pre-1994 PDF
+
+- **Born-digital** (~1990–1993): a clean embedded text layer, one resolution per
+  file, a UN masthead front. Parses like a modern doc.
+- **Scanned compilation-volume excerpts** (older): an OCR text layer of variable
+  quality, laid out as a page of a *"Resolutions adopted …"* supplement —
+  **two-column**, and each file's page holds the **END of the previous
+  resolution, the target, and the START of the next**, under a running page
+  header. Old GA/ECOSOC and SC volumes are also frequently **bilingual**
+  (French + English on the same page).
+- **Pure image scans**: **no text layer at all** — unrecoverable here, excluded.
+
+### Triage classes (this predicts corpus coverage)
+
+`fulltext_extract_pdf.py` scores every PDF's text layer (chars/page, alphanumeric
+ratio, common-word hit rate, garbage-run ratio) and classifies it:
+
+- **`text`** — clean enough to trust (born-digital or good OCR). Extracted; the
+  acceptance gate holds it to the full bar.
+- **`poor`** — marginal OCR. Extracted anyway, flagged (`textlayer_score=poor` on
+  every row's props); the gate holds it to a looser bar.
+- **`none`** — a pure image scan, no usable text. **Skipped**, ledger status
+  `no_text_layer`. **This is the coverage loss** — no OCR is run.
+
+On the stratified 64-doc sample (families × decades, 1940s–1980s): **`text` 51 %,
+`poor` 3 %, `none` 46 %.** So expect the deterministic path to yield usable text
+for **roughly half** of the pre-1994 corpus; the ~46 % pure scans need a future OCR
+stage to recover. `none` skews to the oldest and to ECOSOC volumes.
+
+### What the extractor does (`pdf-v1`)
+
+1. **pymupdf spans → lines**, with per-span font size and bold/italic flags
+   (old scans usually have no italics — fine).
+2. **Drop running headers/footers/page numbers**: a top/bottom band line that is a
+   page number, a doc-symbol string, a separator rule, a *"…Session"* /
+   *"Resolutions adopted…"* running header, or that **repeats across pages** — the
+   parser only drops page artifacts while in the *front* state, so mid-body headers
+   on continuation pages MUST be removed here or they poison the parse.
+3. **Detect columns by a GUTTER** (a near-empty central vertical strip), so a real
+   two-column supplement page splits into left-then-right reading order while a
+   born-digital hanging-number layout stays single-column.
+4. **Separate small-font footnote lines** (body ~9 pt, footnotes ~5 pt) and append
+   them as `kind='footnote'` rows, so column-bottom footnote apparatus does not
+   glue onto body text.
+5. **Reconstruct paragraphs** by column left-edge indent + vertical gaps + terminal
+   punctuation, repairing end-of-line hyphenation; merge a hanging marker (`1.`,
+   `(a)`) into its clause so born-digital docs still yield `1. Requests …`.
+6. **Repair OCR-garbled anchors, conservatively.** Three sequence/vocabulary-
+   confirmed repairs, each touching only a marker or lead word (body text stays
+   verbatim OCR for the acceptance gate):
+   - the **opening formula** (`The General Assemb/y,` → `The General Assembly,`) —
+     the parser anchors its preamble/operative state machine on that exact line, so
+     this repair is what labels the whole preamble `preambular` not `frontmatter`;
+   - a **mis-OCR'd leading digit marker** (`I.`/`l.`→`1.`, `S.`→`5.`) — rewritten
+     **only** when the neighbouring real numeric markers at the same indent
+     arithmetically confirm it (`prev+1 == candidate == next-1`), so a genuine roman
+     `I.`/`II.` heading (followed by `II.`, not `2.`) is never touched. This recovers
+     the first operative of a list whose `1.` was read as `I.`;
+   - a **single-substitution lead-verb corruption** (`Recallinx`→`Recalling`,
+     `Gravelv`→`Gravely`) — first word only, unique edit-distance-1 match against the
+     preambular/operative verb vocabulary, and only when the damaged letter is an
+     OCR-junk glyph (`x v z j q`), so genuine inflections (`authorized`→`authorizes`)
+     are left alone.
+7. **Exclude facing-language (French) lines.** Old GA/ECOSOC/SC volumes print an
+   English column facing a French one; a line carrying ≥3 French function words is
+   dropped from both the body and (independently) the gate's ground truth, so the
+   interleaved French column neither truncates the English crop nor floods the gate.
+8. **Crop to the target resolution** inside the excerpt: start at its own number
+   heading (`1260 (XIII).`, `48/23.`, `Resolution 639 (1989)`), end at its adoption
+   record (`Nth plenary meeting` / `Adopted …`), the next **different** resolution
+   heading, or an SC `Decision(s)` block — including a **narrative** Decisions block
+   (`Decisions At its Nth meeting, … the Council decided …`), whose bleed used to
+   pull the following resolution into the region. If the anchor is uncertain the
+   extractor keeps everything and **flags it** (`crop_anchor_not_found_*`) — it never
+   silently truncates.
+
+### Quality to expect per family/era
+
+- **GA & ECOSOC resolutions** (old two-column and born-digital): the best case.
+  Opening formula + preambular clauses + numbered operatives + adoption line parse
+  cleanly; headers/footers gone; neighbours cropped away. Verify green.
+- **Born-digital (~1990–1993)**: near-perfect (~100 % preservation).
+- **SC resolutions from the "Resolutions and Decisions" volumes**: the resolution
+  **body** (preamble + operatives) extracts and labels correctly. These pages
+  interleave **Decision blocks and presidential-statement text** between
+  resolutions and often adopt neighbours at the **same meeting**; the crop now ends
+  at a narrative `Decisions` block so that tail no longer bleeds into the target.
+- **Bilingual old volumes**: French lines are excluded, so a single-page
+  English/French supplement crops cleanly. A **two-page** bilingual scan where the
+  English body continues across a page behind the facing French column (e.g.
+  `A/RES/221(III)`) can still be **under-cropped** — what is extracted is faithful,
+  but the later operatives may be missed. This class is tiny.
+- **`poor` scans**: extracted and flagged; treat as best-effort.
+
+### Runbook
+
+```bash
+# 1. Fetch (SEPARATE backfill — run AFTER the Word backfill drains). Sample first:
+uv run python python/fulltext_fetch_pdf.py --symbols-file sample.txt --rate 4
+
+# Deferred BULK backfill of the whole pre-1994 PDF corpus (~17.7k docs). Expect
+# several hours; be gentle so it never contends with anything else on ODS:
+uv run python python/fulltext_fetch_pdf.py --catalog --rate 1.8   # ~1.5-2 s/req
+uv run python python/fulltext_fetch_pdf.py --recheck-unavailable  # recover soft-blocks
+
+# 2+3. Extract + parse (idempotent; --force re-extracts 'extracted'/'no_text_layer'):
+uv run python python/fulltext_pipeline.py --pdf
+uv run python python/fulltext_pipeline.py --pdf --limit 20        # smoke test
+
+# 4. Acceptance gate (independent pdftotext ground truth, restricted to the crop):
+uv run python python/fulltext_verify_pdf.py
+```
+
+### The acceptance gate, honestly (`fulltext_verify_pdf.py`)
+
+Ground truth is **`pdftotext`** (poppler, default reading-order mode — independent
+of the pymupdf extractor), restricted to the **cropped target region** by fuzzy-
+anchoring the parse's first/last content on the pdftotext token stream. Words
+outside the region — neighbour resolutions, running headers, the French column —
+are an **expected, counted crop-loss category**, not a failure. A `text` doc passes
+on a small absolute loss (a few OCR letter-substitutions) **or** a high in-region
+preservation fraction (default ≥ 95 %); `poor` docs use a looser bar.
+
+On the 64-doc sample: **34 / 34 extracted docs pass; aggregate in-region
+preservation 99.2 %.** The residual is **inherent OCR letter-substitution**
+(`securitv`, `takmg`, `tbe`, `wornen` — the word is present but mis-recognised) —
+**not extraction drops.** The gate anchors its region by walking the parse's
+elements from the last one backward until one anchors in the pdftotext stream (with
+a token-count bound), so a lead line the OCR mangled can no longer default the
+region to end-of-document and swallow the next resolution. What the gate **cannot**
+prove: that a crop boundary is semantically perfect (an under-cropped bilingual
+two-pager passes on the small region it does anchor), or anything about a
+`none`-class pure scan (excluded before it reaches the gate).
+
 ## Files
 
 | File | Role |
@@ -321,6 +470,9 @@ uv run python python/fulltext_verify_text.py
 | `python/fulltext_verbs.py` | Deterministic action-verb parser (`extract_action`); stdlib-only, `__main__` self-test |
 | `python/fulltext_verbs_eval.py` | Eval harness: `extract_action` vs legacy `mandates.paragraph_mandates` (coverage / verb / category / assignee agreement) |
 | `python/fulltext_verify_text.py` | **Acceptance gate** — docx→parsed text-preservation check (nonzero exit on genuine loss) |
+| `python/fulltext_fetch_pdf.py` | PDF path stage 1 — fetch pre-1994 PDFs from ODS (`t=pdf`); separate backfill |
+| `python/fulltext_extract_pdf.py` | PDF path stage 2 — pymupdf PDF → `document_paragraphs_raw` (triage, header-drop, crop, `pdf-v1`) |
+| `python/fulltext_verify_pdf.py` | PDF path **acceptance gate** — pdftotext(region)→parsed preservation check |
 
 ## Semantic layer policies
 

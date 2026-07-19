@@ -41,6 +41,16 @@ STAGES = [
     ("parse", "python/fulltext_parse.py", ["--to-db"]),
 ]
 
+# PDF path (pre-1994, deterministic): no LibreOffice convert stage — pymupdf reads
+# the archived PDF directly. fetch_pdf is deliberately NOT here (a separate, gentle
+# backfill run AFTER the Word backfill; see fulltext_fetch_pdf.py / docs/fulltexts.md).
+# The parse stage is format-agnostic and idempotent, so it finishes the PDF docs
+# the same way it finishes Word docs.
+PDF_STAGES = [
+    ("extract_pdf", "python/fulltext_extract_pdf.py", []),
+    ("parse", "python/fulltext_parse.py", ["--to-db"]),
+]
+
 
 def run_stage(label: str, script: str, extra: list[str]) -> tuple[bool, float]:
     cmd = ["uv", "run", "python", script, *extra]
@@ -56,19 +66,24 @@ def main() -> int:
     ap.add_argument("--limit", type=int, help="forward --limit N to every stage")
     ap.add_argument("--workers", type=int, help="forward --workers N to the convert stage")
     ap.add_argument("--force", action="store_true",
-                    help="forward --force to extract_raw (re-extract already-'extracted' rows); "
-                         "parse always re-parses extracted+parsed docs, so it needs no --force")
+                    help="forward --force to the extract stage (re-extract already-'extracted' "
+                         "rows); parse always re-parses extracted+parsed docs, so it needs no --force")
+    ap.add_argument("--pdf", action="store_true",
+                    help="run the PRE-1994 PDF path (extract_pdf -> parse) instead of the Word "
+                         "path (convert -> extract_raw -> parse). Fetch PDFs separately with "
+                         "fulltext_fetch_pdf.py first.")
     args = ap.parse_args()
 
+    stages = PDF_STAGES if args.pdf else STAGES
     results: list[tuple[str, bool, float]] = []
     overall_ok = True
-    for label, script, extra in STAGES:
+    for label, script, extra in stages:
         stage_args = list(extra)
         if args.limit is not None:
             stage_args += ["--limit", str(args.limit)]
         if args.workers is not None and label == "convert":
             stage_args += ["--workers", str(args.workers)]
-        if args.force and label == "extract_raw":
+        if args.force and label in ("extract_raw", "extract_pdf"):
             stage_args += ["--force"]
         ok, dt = run_stage(label, script, stage_args)
         results.append((label, ok, dt))
@@ -82,7 +97,7 @@ def main() -> int:
     print(f"{'-' * 14} {'-' * 8} {'-' * 9}")
     for label, ok, dt in results:
         print(f"{label:<14} {'ok' if ok else 'FAILED':<8} {dt:>9.1f}")
-    for label, _, _ in STAGES:
+    for label, _, _ in stages:
         if label not in {r[0] for r in results}:
             print(f"{label:<14} {'skipped':<8} {'-':>9}")
 
