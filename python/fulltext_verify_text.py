@@ -215,7 +215,8 @@ def genuine_loss(gt: Counter, pw: Counter, has_vote: bool,
 # Targets (ledger) + docx resolution (archive files)
 # ---------------------------------------------------------------------------
 
-def fetch_targets(limit: int | None, symbols: list[str] | None) -> list[tuple[str, str, str]]:
+def fetch_targets(limit: int | None, symbols: list[str] | None,
+                  offset: int = 0) -> list[tuple[str, str, str]]:
     """[(symbol, format, docx_relpath), ...] for extracted docs.
 
     The docx is converted_path when present (doc/wpd source), else archive_path
@@ -229,8 +230,11 @@ def fetch_targets(limit: int | None, symbols: list[str] | None) -> list[tuple[st
         params.append(symbols)
     sql += "ORDER BY symbol_normalized "
     if limit:
-        sql += "LIMIT %s"
+        sql += "LIMIT %s "
         params.append(limit)
+    if offset:
+        sql += "OFFSET %s"
+        params.append(offset)
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         return [(r[0], r[1], r[2]) for r in cur.fetchall()]
@@ -243,6 +247,7 @@ def fetch_targets(limit: int | None, symbols: list[str] | None) -> list[tuple[st
 def main() -> int:
     ap = argparse.ArgumentParser(description="Acceptance gate: docx->parsed text preservation.")
     ap.add_argument("--limit", type=int, help="cap number of documents checked")
+    ap.add_argument("--offset", type=int, default=0, help="skip first N targets (chunked runs)")
     ap.add_argument("--symbols", nargs="*", help="restrict to these symbol_normalized values")
     ap.add_argument("--parsed-dir", type=Path, default=PARSED_DIR,
                     help="directory of parsed JSONs (default: parsed_dev on the SSD)")
@@ -256,7 +261,7 @@ def main() -> int:
 
     parsed_dir: Path = args.parsed_dir
     ignore = set(args.ignore_symbols)
-    targets = fetch_targets(args.limit, args.symbols)
+    targets = fetch_targets(args.limit, args.symbols, args.offset)
     print(f"Acceptance gate: {len(targets)} extracted docs; parsed_dir={parsed_dir}")
 
     n_checked = n_pass = n_fail = n_skip = 0

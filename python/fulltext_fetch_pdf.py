@@ -86,8 +86,8 @@ MAX_DATE = "1994-01-01"
 DEFAULT_RATE = 4.0                 # seconds between requests (jittered ±30%)
 REST_EVERY = 500
 REST_MIN, REST_MAX = 60.0, 120.0
-CIRCUIT_THRESHOLD = 8
-CIRCUIT_SLEEPS = (900.0, 3600.0)   # trip #1 => 15 min, #2 => 60 min, #3 => exit
+CIRCUIT_THRESHOLD = 25
+CIRCUIT_SLEEPS = (300.0, 900.0)    # precautionary pauses; never exits
 BLOCK_PAUSE = 600.0
 FLUSH_EVERY = 20
 PROGRESS_EVERY = 10
@@ -360,10 +360,12 @@ def main() -> int:
                 "ods_url": ods_url, "content_type": None, "error": error,
             })
 
-        if outcome == "fetched" and not block_during:
-            consecutive_block = 0
-        else:
+        # Misses are genuine ODS absences (pre-1994 gaps cluster); only real
+        # block signals (429/403/resets) count toward the circuit breaker.
+        if block_during:
             consecutive_block += 1
+        elif outcome == "fetched":
+            consecutive_block = 0
 
         done = i + 1
         if len(buffer) >= FLUSH_EVERY:
@@ -379,15 +381,10 @@ def main() -> int:
             circuit_trips += 1
             flush()
             persist_watermark(done)
-            if circuit_trips > len(CIRCUIT_SLEEPS):
-                print(f"\n!! Circuit breaker tripped {circuit_trips}× — exiting cleanly "
-                      f"(resumable).", file=sys.stderr, flush=True)
-                print(f"\nStopped early. ok={ok} unavailable={unavailable} "
-                      f"failed={failed} of {total} (processed {done}).")
-                return 0
-            long_pause(CIRCUIT_SLEEPS[circuit_trips - 1],
+            pause = CIRCUIT_SLEEPS[min(circuit_trips, len(CIRCUIT_SLEEPS)) - 1]
+            long_pause(pause,
                        f"circuit breaker trip #{circuit_trips}: {consecutive_block} "
-                       f"consecutive block/miss outcomes — assuming soft-block")
+                       f"consecutive real block signals — pausing as a precaution")
             consecutive_block = 0
 
         if run.requests >= next_rest and done != total:

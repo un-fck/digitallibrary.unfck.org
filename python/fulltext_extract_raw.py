@@ -45,7 +45,7 @@ from psycopg.types.json import Jsonb
 
 from fulltext_common import ARCHIVE_ROOT, get_conn, upsert_document_file
 
-EXTRACTOR_VERSION = "raw-v2"
+EXTRACTOR_VERSION = "raw-v3"
 BATCH_DOCS = 20  # docs per short-lived DB connection
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -513,7 +513,15 @@ def _emit_notes(part: etree._Element | None, tag: str, note_type: str, rows: lis
         if note.get(W + "type") in ("separator", "continuationSeparator"):
             continue
         note_id = note.get(W + "id")
-        text = "\n".join(runs_text(p) for p in note.findall(W + "p"))
+        # Footnote paragraphs can embed DrawingML text boxes (same class as
+        # body runs) — descend into them or their text is silently lost.
+        parts = []
+        for p in note.findall(W + "p"):
+            parts.append(runs_text(p))
+            tbs: list[etree._Element] = []
+            _collect_run_textboxes(p, tbs)
+            parts.extend(runs_text(tb_p) for tb_p in tbs)
+        text = "\n".join(t for t in parts if t)
         row = _new_row("footnote", text)
         ref: dict = {"note_id": int(note_id) if note_id is not None else None}
         if note_type == "endnote":
@@ -562,7 +570,7 @@ def write_document(conn, symbol: str, lang: str, rows: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 
 def fetch_targets(symbols: list[str] | None, force: bool, limit: int | None):
-    statuses = ["converted", "extracted"] if force else ["converted"]
+    statuses = ["converted", "extracted", "parsed"] if force else ["converted"]
     sql = (
         "SELECT symbol_normalized, lang, format, archive_path, converted_path "
         "FROM digitallibrary.document_files "

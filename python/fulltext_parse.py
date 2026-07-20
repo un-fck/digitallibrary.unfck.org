@@ -1269,7 +1269,7 @@ def _heading_level(lr: LRow) -> int:
 # ---------------------------------------------------------------------------
 
 
-def fetch_targets(limit: int | None, symbol: str | None) -> list[tuple[str, str, str]]:
+def fetch_targets(limit: int | None, symbol: str | None, offset: int = 0) -> list[tuple[str, str, str]]:
     """Return (symbol_normalized, lang, format) for parseable documents.
 
     Targets any doc whose raw extraction is available: status IN
@@ -1285,10 +1285,13 @@ def fetch_targets(limit: int | None, symbol: str | None) -> list[tuple[str, str,
     if symbol:
         sql += "AND df.symbol_normalized = %s "
         params.append(symbol)
-    sql += "ORDER BY df.symbol_normalized "
+    sql += "ORDER BY (df.status = 'extracted') DESC, df.symbol_normalized "
     if limit:
-        sql += "LIMIT %s"
+        sql += "LIMIT %s "
         params.append(limit)
+    if offset:
+        sql += "OFFSET %s"
+        params.append(offset)
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         return [(r[0], r[1] or "en", r[2]) for r in cur.fetchall()]
@@ -1431,6 +1434,7 @@ BATCH_DOCS = 20  # docs per short-lived DB connection (mirrors fulltext_extract_
 def main() -> int:
     ap = argparse.ArgumentParser(description="Semantic full-text parser (v1)")
     ap.add_argument("--limit", type=int)
+    ap.add_argument("--offset", type=int, default=0)
     ap.add_argument("--symbol")
     ap.add_argument("--out", default=str(OUT_DIR))
     ap.add_argument("--to-db", action="store_true",
@@ -1446,7 +1450,7 @@ def main() -> int:
     if write_json:
         out_dir.mkdir(parents=True, exist_ok=True)
 
-    targets = fetch_targets(args.limit, args.symbol)
+    targets = fetch_targets(args.limit, args.symbol, args.offset)
     dest = []
     if write_json:
         dest.append(str(out_dir))
