@@ -127,6 +127,17 @@ def fetch_ods_pdf(
                 raise requests.RequestException(f"server {resp.status_code}")
             if resp.status_code == 200 and not content:
                 raise requests.RequestException("empty body")
+            # ODS pseudo-redirect: for many archive PDFs the API answers 200
+            # text/plain "Found. Redirecting to /doc/UNDOC/.../NRxxxxx.PDF"
+            # instead of an HTTP redirect. Follow it with a second GET.
+            if content.startswith(b"Found. Redirecting to "):
+                path = content.decode("ascii", "ignore").split("Redirecting to ", 1)[1].strip()
+                if path.startswith("/"):
+                    run.requests += 1
+                    nap(1.0)
+                    resp = session.get(f"https://documents.un.org{path}",
+                                       timeout=HTTP_TIMEOUT)
+                    content = resp.content
             return resp.status_code, content, resp.headers.get("Content-Type", "")
         except (requests.RequestException, OSError) as exc:
             last_exc = exc
