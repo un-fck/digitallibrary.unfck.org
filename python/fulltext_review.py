@@ -727,7 +727,10 @@ def render_right(an: dict) -> str:
         elif role == "heading":
             hl = el.get("heading_level")
             size = {1: 17, 2: 15, 3: 13.5}.get(hl if isinstance(hl, int) else 2, 13)
-            body_wrap = f'<div class="body" style="font-size:{size}px">{esc(el.get("text"))}</div>'
+            pref = el.get("prefix")
+            pref_html = f'<span class="opref">{esc(pref)}</span> ' if pref else ""
+            body_wrap = (f'<div class="body" style="font-size:{size}px">'
+                         f'{pref_html}{esc(el.get("text"))}</div>')
         elif role == "table":
             body_wrap = f'<div class="body">{render_table_body(el)}</div>'
         elif role == "title":

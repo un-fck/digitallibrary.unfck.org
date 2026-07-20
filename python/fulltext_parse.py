@@ -67,7 +67,18 @@ from fulltext_common import ARCHIVE_ROOT, get_conn, sanitize_symbol, upsert_docu
 # sem-v2 adds the action-verb annotation pass (migration 004): a nested `action`
 # object on each operative/preambular element, flattened to the action_*/assignee_*
 # columns by the loader. Element construction / accounting are unchanged.
-PARSER_VERSION = "sem-v2"
+# sem-v3 (HEADING STRUCTURE): (1) STYLE-TRUSTED headings — a raw heading style
+# (H1/H2/H23/H4../HCh/Heading1-9) becomes type='heading' with its style tier,
+# with the TOC verifier's front-matter FALSE-POSITIVE exclusions ported; (2) a
+# bare section-marker heading ('I') merges with the short title line after it
+# (prefix='I.', text='General guidelines'); (3) whole-paragraph-bold structural
+# labels ('Action 13.', 'Goal 1.', 'Objective 5:') + short bold title fragments
+# become headings nested below their section; (4) leading markers emit as `prefix`;
+# (5) annex/appendix delimiters carry subtype + label prefix + merged title, and
+# every annexed element inherits its delimiter's annex_index. paragraph_type is
+# untouched; text/positions/accounting are preserved (markers move to `prefix`,
+# which the text-preservation gate counts).
+PARSER_VERSION = "sem-v3"
 OUT_DIR = ARCHIVE_ROOT / "parsed_dev"
 
 # Opt-in source-defect rescue: when a resolution drops an operative NUMBER at
@@ -202,6 +213,118 @@ REPORT_NOTE_RE = re.compile(r"^\[on the (report|recommendation) ", re.I)
 # handled as titles; the rest mark section headings inside the body.
 BODY_HEADING_STYLES = {"H1", "H2", "H3", "H4", "H23", "H1G", "H2G", "H3G", "H4G",
                        "HCh", "HChG", "HChM"}
+
+# sem-v3 STYLE-TRUSTED HEADINGS: raw style_ids that the document author marked as
+# body headings are trusted directly (regardless of bold), mirroring the TOC
+# verifier's _HEADING_STYLE list plus the UN G/M-suffixed variants. Matching these
+# recovers the section titles the older bold-only heuristic demoted to body text.
+STYLE_HEADING_RE = re.compile(
+    r"^(H\d+[GM]?|HCh[GM]?|Heading\d+|ArtHead|SectionHead|ChapterHead)$", re.I)
+# Numbered resolution-title style -> title tier (handled by _match_title, never a
+# body heading). Kept out of STYLE_HEADING_RE deliberately.
+STYLE_TITLE_RE = re.compile(r"^(TitleH1|Title\d*)$", re.I)
+# Title-ish front-matter styles that must NOT masquerade as body headings.
+STYLE_FRONTMATTER_RE = re.compile(r"^(TitleHC[hH]|AgendaTitle.*|Session.*|Distr.*)$", re.I)
+# Front-matter TEXT patterns (the verifier's curated FALSE-POSITIVE EXCLUSIONS):
+# bracketed committee references, agenda/distribution lines, "Resolution adopted
+# by ...", the SC "Adopted by the Security Council at its ..." lines, bare doc
+# symbols, and spelled-out session ordinals. A heading-styled line whose text
+# matches these stays frontmatter/title, exactly as the verifier excludes it.
+STYLE_HEADING_FP_RE = re.compile(
+    r"^(\[.*\]$|agenda item\b|distr\b|resolution adopted by\b|adopted by the\b|"
+    r"[A-Z]/(RES|PRST|DEC)/|"
+    r"(seventy|sixty|fifty|forty|thirty|twenty|nineteen|eighteen|seventeen|sixteen|"
+    r"fifteen|fourteen|thirteen|twelfth|eleventh|tenth|ninth|eighth|seventh|sixth|"
+    r"fifth|fourth|third|second|first)-?)",
+    re.I,
+)
+
+# Bold run-in STRUCTURAL LABEL: a whole-paragraph-bold body line that opens with a
+# structural label ("Action 13.", "Goal 1.", "Objective 5:") — including the Pact
+# for the Future's "Action N. We will ..." commitments (bold label leading a
+# sentence). Captured as a heading with the label as prefix.
+BOLD_RUNIN_LABEL_RE = re.compile(r"^(action|goal|objective|priority|target)\s+\d+[.:]?\s+\S", re.I)
+
+# Heading prefix extraction (goal 4): a leading section marker split into `prefix`
+# so the UI can style it. Labeled ("Objective 1."), delimited marker ("II.", "B.",
+# "3)"), or a bare roman numeral leading a title ("I A new generation ...").
+_HPREFIX_LABELED = re.compile(
+    r"^((?:action|goal|objective|priority|target|article|annex|appendix|chapter|"
+    r"section|part|principle|pillar|phase|step)\s+[\dIVXLCM]+[.:]?)\s+(\S.*)$", re.I)
+_HPREFIX_MARKER = re.compile(r"^((?:[IVXLCM]{1,6}|[A-Z]|\d{1,3})[.:)])\s+(\S.*)$")
+_HPREFIX_ROMAN_NODELIM = re.compile(r"^([IVX]{1,6})\s+([A-Z]\S.*)$")
+
+# A heading whose ENTIRE visible text is just an enumerator marker (roman/letter/
+# number), used by the bare-heading + title merge (goal 2).
+_BARE_MARKER_RE = re.compile(r"^\(?([IVXLCM]{1,7}|[A-Z]|\d{1,3})\)?\.?$")
+
+# Split an annex/appendix delimiter into (label, numeral, inline-title). Only ever
+# called on lines that already matched ANNEX_RE, so the numeral token is trusted.
+_ANNEX_SPLIT_RE = re.compile(
+    r"^(Annex|Appendix)(?:\s+([IVXLCDM]+|[A-Z]|\d{1,3})\b)?(?:\s*[-–—:.]\s*|\s+)?(\S.*)?$",
+    re.I,
+)
+
+
+def _heading_fp(c: str) -> bool:
+    """True if a heading-styled/bold line is really front-matter (verifier FP set)."""
+    return bool(
+        STYLE_HEADING_FP_RE.match(c) or DATE_LINE_RE.match(c)
+        or RUNNING_HEADER_RE.match(c) or PAGE_NUM_RE.match(c)
+    )
+
+
+def _style_is_heading(c: str, lr: "LRow", state: str) -> bool:
+    """True if the raw paragraph style marks this as a trusted body heading.
+
+    Front region is skipped (titles/masthead live there); front-matter styles and
+    the numbered-title style are excluded; the verifier's FP text patterns keep the
+    committee-ref / adopted-by / session lines out even when heading-styled."""
+    if state == "front":
+        return False
+    st = lr.style or ""
+    if not st or STYLE_FRONTMATTER_RE.match(st) or STYLE_TITLE_RE.match(st):
+        return False
+    if not STYLE_HEADING_RE.match(st):
+        return False
+    return bool(c) and not _heading_fp(c)
+
+
+def _bold_heading(c: str, lr: "LRow", state: str) -> bool:
+    """Whole-paragraph-bold structural label or short title line (verifier bold src)."""
+    if state == "front" or not lr.props.get("bold") or not c or _heading_fp(c):
+        return False
+    if BOLD_RUNIN_LABEL_RE.match(c):
+        return True
+    # short, non-sentence title fragment -- but never a verb-led operative/preambular
+    # clause (those keep their paragraph_type; we do not inflate/deflate labeling).
+    if len(c) <= 60 and len(c.split()) <= 8 and not c.endswith("."):
+        w0 = c.split(" ", 1)[0].strip(",.").lower()
+        if w0 in OPERATIVE_LEAD_VERBS or w0 in PREAMBULAR_FIRST_WORDS:
+            return False
+        return c[:1].isupper() or c[:1].isdigit()
+    return False
+
+
+def _split_heading_prefix(c: str) -> tuple[str | None, str]:
+    """Split a leading section marker into (prefix, text). (None, c) if no marker."""
+    for rx in (_HPREFIX_LABELED, _HPREFIX_MARKER, _HPREFIX_ROMAN_NODELIM):
+        m = rx.match(c)
+        if m:
+            return m.group(1).strip(), m.group(2).strip()
+    return None, c
+
+
+def _split_annex_heading(c: str) -> tuple[str, str | None, str | None]:
+    """(label, numeral, inline_title) for an annex/appendix delimiter line."""
+    m = _ANNEX_SPLIT_RE.match(c)
+    if not m:
+        return ("Annex", None, None)
+    label = m.group(1).title()
+    numeral = m.group(2)
+    title = (m.group(3) or "").strip() or None
+    return (label, numeral, title)
+
 
 ROMAN_CHARS = set("ivxlcdm")
 
@@ -688,6 +811,80 @@ def annotate_actions(elements: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 
 
+_MERGE_SKIP_SUBTYPES = {"subres", "annex", "appendix", "instrument", "amendment"}
+
+
+def _is_bare_marker_heading(el: dict) -> bool:
+    """A heading whose only content is a section marker (its text, or a marker-only
+    prefix with empty text). Annex/subres delimiters are excluded."""
+    if el.get("type") != "heading" or el.get("subtype") in _MERGE_SKIP_SUBTYPES:
+        return False
+    txt = (el.get("text") or "").strip()
+    if txt:
+        return bool(_BARE_MARKER_RE.match(txt))
+    pfx = (el.get("prefix") or "").strip().rstrip(".)")
+    return bool(pfx) and bool(_BARE_MARKER_RE.match(pfx))
+
+
+def _is_title_like(el: dict) -> bool:
+    """The following element reads like the title that belongs to a bare marker: a
+    non-marker heading, or a short non-sentence NULL-type paragraph."""
+    t = (el.get("text") or "").strip()
+    if not t or _BARE_MARKER_RE.match(t):
+        return False
+    if el.get("type") == "heading":
+        return True
+    if el.get("type") == "paragraph" and el.get("paragraph_type") is None:
+        return len(t.split()) <= 14 and t[-1:] not in ".;" and (t[:1].isupper() or t[:1].isdigit())
+    return False
+
+
+def _merge_bare_headings(elements: list[dict]) -> list[dict]:
+    """Goal 2: merge a bare section-marker heading ('I', 'II.', 'A.') with the short
+    title line that immediately follows it (within the same block) into ONE heading:
+    prefix='I.', text='General guidelines'. Positions/hyperlinks/notes are unioned."""
+    out: list[dict] = []
+    i, n = 0, len(elements)
+    while i < n:
+        el = elements[i]
+        if i + 1 < n and _is_bare_marker_heading(el):
+            nxt = elements[i + 1]
+            same_block = (
+                el.get("section") == nxt.get("section")
+                and el.get("text_index", 1) == nxt.get("text_index", 1)
+                and el.get("annex_index") == nxt.get("annex_index"))
+            if same_block and _is_title_like(nxt):
+                marker = ((el.get("text") or "").strip()
+                          or (el.get("prefix") or "").strip()).rstrip(".)").strip()
+                ntext = ((nxt.get("prefix") or "") + (nxt.get("text") or "")).strip()
+                merged = dict(el)
+                merged["prefix"] = f"{marker}." if marker else None
+                merged["text"] = ntext
+                merged["positions"] = list(el.get("positions") or []) + list(nxt.get("positions") or [])
+                merged["hyperlinks"] = (el.get("hyperlinks") or []) + (nxt.get("hyperlinks") or [])
+                merged["note_ids"] = sorted(set((el.get("note_ids") or []) + (nxt.get("note_ids") or [])))
+                out.append(merged)
+                i += 2
+                continue
+        out.append(el)
+        i += 1
+    return out
+
+
+def _stamp_annex_index(elements: list[dict]) -> None:
+    """Annex-contract: every element in section='annex' carries the annex_index of
+    its delimiter (delimiters set it in the loop; body elements inherit it here)."""
+    cur: int | None = None
+    for el in elements:
+        if el.get("section") == "annex":
+            if el.get("annex_index") is not None:
+                cur = el["annex_index"]
+            elif cur is not None:
+                el["annex_index"] = cur
+        elif el.get("section") == "main":
+            cur = None  # a new main-section block (opening / sub-res) ends annex scope
+
+
 def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
     lrows = build_logical_rows(raw_rows, fmt)
     subres = detect_subres_blocks(lrows)
@@ -711,6 +908,8 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
     annex_scoped = False            # current annex/appendix is a scoped instrument
                                     # (its numbered paras are labeled operative)
     last_op_number = 0              # last top-level operative number seen (for rescue)
+    last_heading_level = None        # tier of the most recent section heading, so a
+                                     # bold run-in ('Action N.') nests one level below
     op_tracker = OpLevelTracker()
 
     i = 0
@@ -862,6 +1061,10 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
             continue
 
         # 7. annex / appendix heading -> new section --------------------------
+        # The delimiter is a heading carrying subtype ('annex'/'appendix', or the
+        # scoped 'instrument'/'amendment'), prefix = the label+numeral ('Annex II'),
+        # and text = the annex TITLE (inline after a dash, or merged from the next
+        # line in step 7b). last_heading_level is reset so run-ins nest below it.
         if ANNEX_RE.match(c) and state != "front":
             m = ANNEX_RE.match(c)
             if m.group(1).lower() == "annex":
@@ -871,29 +1074,44 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
                 section = "appendix"
             op_tracker.top()
             op_tracker.reset()
+            label, numeral, inline_title = _split_annex_heading(c)
+            annex_prefix = (label + (f" {numeral}" if numeral else "")).strip()
             annex_sub = _annex_subtype(lrows, i, c)
             annex_scoped = annex_sub == "instrument"
+            subtype = annex_sub or ("appendix" if section == "appendix" else "annex")
             el = _new_element(lr, type="heading", section=section, heading_level=1,
-                              text=c, text_index=text_index)
+                              prefix=annex_prefix, text=inline_title or "",
+                              subtype=subtype, text_index=text_index)
             if section == "annex":
                 el["annex_index"] = annex_index
-            if annex_sub:
-                el["subtype"] = annex_sub
             elements.append(el)
-            # 'annextitle' captures the instrument/annex title line as a title
-            # element; then the (scoped) preamble/operative machine runs.
+            last_heading_level = 1
+            # 'annextitle' folds the following title line into this delimiter (below);
+            # then the (scoped) preamble/operative machine runs.
             state = "annextitle"
             i += 1
             continue
 
-        # 7b. annex title line (first content line after an annex heading) ------
+        # 7b. annex title line: merge the first plain title line INTO the delimiter
+        # heading (goal / annex-contract: one heading element carries label+title).
         if state == "annextitle":
-            # only a plain title line; structural rows fall through to be parsed
-            if not (OPENING_RE.match(c) or OP_NUM_RE.match(c) or OP_PAREN_RE.match(c)
-                    or ANNEX_RE.match(c) or _looks_like_heading(c, lr, "operative")
-                    or MEETING_RE.match(c) or DIVIDER_RE.match(c)):
-                elements.append(_new_element(lr, type="title", section=section,
-                                             text=c, text_index=text_index))
+            structural = bool(
+                OPENING_RE.match(c) or OP_NUM_RE.match(c) or OP_PAREN_RE.match(c)
+                or ANNEX_RE.match(c) or MEETING_RE.match(c) or DIVIDER_RE.match(c)
+                or VOTE_RE.match(c) or VOTE_TALLY_RE.match(c))
+            delim = elements[-1] if elements else None
+            can_merge = (
+                delim is not None and delim.get("type") == "heading"
+                and delim.get("section") in ("annex", "appendix")
+                and not (delim.get("text") or "").strip())
+            hp, _ = _split_heading_prefix(c)
+            if not structural and can_merge and hp is None and len(c) <= 200:
+                delim["positions"] = list(delim["positions"]) + list(lr.positions)
+                delim["text"] = c
+                if lr.hyperlinks:
+                    delim["hyperlinks"] = (delim.get("hyperlinks") or []) + lr.hyperlinks
+                if lr.note_ids:
+                    delim["note_ids"] = sorted(set((delim.get("note_ids") or []) + lr.note_ids))
                 state = "preamble"
                 i += 1
                 continue
@@ -958,7 +1176,7 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
         in_main = section == "main"
         label_ops = in_main or annex_scoped
         m_num = OP_NUM_RE.match(c)
-        if m_num and not TITLE_GA_NUM_RE.match(c):
+        if m_num and not TITLE_GA_NUM_RE.match(c) and not _style_is_heading(c, lr, state):
             op_tracker.top()
             last_op_number = int(m_num.group(1))
             elements.append(_new_element(
@@ -1016,11 +1234,23 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
             i += 1
             continue
 
-        # 12. body heading (roman/letter/short heading-styled line) -----------
+        # 12. body heading (roman/letter/short heading-styled/bold-run-in line) --
+        # sem-v3: split any leading section marker into `prefix`; a style heading
+        # takes its tier from the style, a bold run-in label nests one level below
+        # the enclosing section heading.
         if _looks_like_heading(c, lr, state):
+            hpref, htext = _split_heading_prefix(c)
+            if _style_is_heading(c, lr, state):
+                hlevel = _heading_level(lr)
+                last_heading_level = hlevel
+            elif _bold_heading(c, lr, state):
+                hlevel = min((last_heading_level or 2) + 1, 6)
+            else:
+                hlevel = _heading_level(lr)
+                last_heading_level = hlevel
             elements.append(_new_element(lr, type="heading", section=section,
-                                         heading_level=_heading_level(lr),
-                                         text=c, text_index=text_index))
+                                         heading_level=hlevel, prefix=hpref,
+                                         text=htext, text_index=text_index))
             i += 1
             continue
 
@@ -1122,6 +1352,12 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
         elements.append(_new_element(lr, type="paragraph", section=section,
                                      paragraph_type=None, text=c, text_index=text_index))
         i += 1
+
+    # sem-v3: fold a bare section-marker heading ('I') into the short title line
+    # that follows it, then backfill annex_index onto every annexed element. Both
+    # are position-preserving (concatenate/copy only), so accounting is unaffected.
+    elements = _merge_bare_headings(elements)
+    _stamp_annex_index(elements)
 
     # sem-v2: annotate operative/preambular elements with their action verb in a
     # cleanly separable pass (additive; never touches text/positions/accounting).
@@ -1238,6 +1474,10 @@ def _looks_like_heading(c: str, lr: LRow, state: str) -> bool:
     """Heuristic for a section heading inside the body (not title/opening)."""
     if state == "front":
         return False
+    # sem-v3: trust the document's own heading style / bold run-in labels first
+    # (these may be long, so they precede the length guard).
+    if _style_is_heading(c, lr, state) or _bold_heading(c, lr, state):
+        return True
     if len(c) > 80:
         return False
     # lone roman numeral or single capital letter (consolidated sub-res letter,
@@ -1258,9 +1498,16 @@ def _looks_like_heading(c: str, lr: LRow, state: str) -> bool:
 
 
 def _heading_level(lr: LRow) -> int:
-    m = re.match(r"H(\d)", lr.style or "")
+    """Heading tier from the paragraph style, mirroring the TOC verifier: H<n>/H<nm>
+    -> first digit (H23 -> 2), Heading<n> -> that digit, HCh/unknown -> 1."""
+    st = lr.style or ""
+    m = re.match(r"^H(\d)", st)
     if m:
         return int(m.group(1))
+    if STYLE_HEADING_RE.match(st):
+        d = re.search(r"\d", st)
+        if d:
+            return int(d.group())
     return 1
 
 

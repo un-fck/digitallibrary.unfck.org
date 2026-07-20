@@ -596,13 +596,24 @@ flattened into columns, plus loader-computed `position`/`id` and provenance.
   element, so an array (not a scalar) is required.
 - **`type`** — `frontmatter|title|opening|heading|paragraph|footnote|divider|
   vote_record|table|signature`. **`subtype`** — `masthead|subres|instrument|
-  amendment` where applicable, else `NULL`.
+  amendment|annex|appendix` where applicable, else `NULL`. Since **sem-v3** every
+  annex/appendix delimiter is a `heading` carrying a subtype (`annex`/`appendix`,
+  or the scoped `instrument`/`amendment`), its label in `prefix` (`Annex II`) and
+  its title in `text` (folded in from the following line when the delimiter line
+  had none).
 - **`paragraph_type`** — `preambular|operative`, **resolution-body only** (main
   section + scoped instrument annex); `NULL` everywhere else even when numbered
   (partial index `idx_document_paragraphs_ptype`). See the labelling policies above.
+  sem-v3's heading changes never alter it (a heading-styled line that used to be
+  mislabelled operative/preambular simply becomes a `heading`, dropping <0.5% of
+  op/pp labels corpus-wide — a correctness fix, not a semantic shift).
 - **`section`** (`main|annex|appendix`), **`annex_index`**, **`text_index`**
   (omnibus/multi-text block ordinal), **`level`**/**`heading_level`**,
   **`prefix`** (literal marker as printed), **`lead_verb`**, **`text`** (cleaned).
+  Since **sem-v3** every element in `section='annex'` carries the `annex_index` of
+  its delimiter (delimiters set it; body elements inherit it), so per-doc
+  `annex_index` runs are gapless with no NULLs; and section-heading markers
+  (`I.`, `B.`, `Goal 1.`, `Action 13.`) live in `prefix`, not glued into `text`.
 - **`inferred_operative`** — `true` for the source-dropped-number rescue.
 - **`vote`** / **`vote_summary`** — populated on `vote_record` rows only.
   **`hyperlinks`** / **`note_ids`** — JSONB arrays carried from raw (`[]` when none).
@@ -628,6 +639,36 @@ GROUP BY p.symbol_normalized, p.dropped;
 
 `document_files.status = 'parsed'` marks a doc as loaded; every `document_parses`
 row has a matching `parsed` ledger row (loader sets both in the same transaction).
+
+### Annexes (sem-v3)
+
+List a document's annexes — delimiter, label, title — from the `heading` rows:
+
+```sql
+SELECT annex_index, prefix AS label, text AS title, subtype
+FROM digitallibrary.document_paragraphs
+WHERE symbol_normalized = 'A/RES/69/313' AND lang = 'en'
+  AND type = 'heading' AND section = 'annex' AND subtype IS NOT NULL
+ORDER BY annex_index;
+-- and every body element of annex N is  section='annex' AND annex_index = N.
+```
+
+Annex-index integrity (expect **0 rows**: no NULL annex_index inside an annex, and
+per-doc annex_index runs are gapless 1..max):
+
+```sql
+-- (a) NULLs inside an annex
+SELECT symbol_normalized, count(*)
+FROM digitallibrary.document_paragraphs
+WHERE section = 'annex' AND annex_index IS NULL
+GROUP BY symbol_normalized;
+-- (b) gaps: max(annex_index) must equal count(distinct annex_index)
+SELECT symbol_normalized, max(annex_index), count(DISTINCT annex_index)
+FROM digitallibrary.document_paragraphs
+WHERE section = 'annex'
+GROUP BY symbol_normalized
+HAVING max(annex_index) <> count(DISTINCT annex_index);
+```
 
 ### Idempotency & re-parse
 
