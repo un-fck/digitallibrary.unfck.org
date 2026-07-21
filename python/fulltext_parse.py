@@ -78,7 +78,17 @@ from fulltext_common import ARCHIVE_ROOT, get_conn, sanitize_symbol, upsert_docu
 # every annexed element inherits its delimiter's annex_index. paragraph_type is
 # untouched; text/positions/accounting are preserved (markers move to `prefix`,
 # which the text-preservation gate counts).
-PARSER_VERSION = "sem-v3"
+# sem-v4 (DOTTED ENUMERATORS + LONG SECTION HEADINGS): (1) a paragraph opening with a
+# CONFIRMED dotted enumerator ('1.1 By 2030 ...', '8.10 ...', '1.a ...') — the SDG-
+# target / forest-goal / programme-plan family — moves its marker to `prefix`, gets
+# level=2, and has its text stripped; confirmation is sequence-based (a contiguous
+# follows()-chain >=3 opening at a numeric '.1'), so assessment-scale rows ('0.01
+# Albania ....'), statistics tables and lone in-sentence decimals are never promoted;
+# (2) a bold/heading-styled lettered-or-roman section heading with a possibly-LONG
+# descriptive title ('B. Advancing integration ...', 'III. Green economy ...') is now
+# recognised even past the 80-char guard, with a verb guard so a bold 'I. Decides ...'
+# operative is not swallowed. paragraph_type/positions/accounting are untouched.
+PARSER_VERSION = "sem-v4"
 OUT_DIR = ARCHIVE_ROOT / "parsed_dev"
 
 # Opt-in source-defect rescue: when a resolution drops an operative NUMBER at
@@ -257,6 +267,17 @@ _HPREFIX_ROMAN_NODELIM = re.compile(r"^([IVX]{1,6})\s+([A-Z]\S.*)$")
 # A heading whose ENTIRE visible text is just an enumerator marker (roman/letter/
 # number), used by the bare-heading + title merge (goal 2).
 _BARE_MARKER_RE = re.compile(r"^\(?([IVXLCM]{1,7}|[A-Z]|\d{1,3})\)?\.?$")
+
+# sem-v4 DOTTED ENUMERATOR (SDG-target family): a paragraph whose text OPENS with a
+# dotted-numeric ('1.1', '8.10') or letter-suffixed ('1.a') enumerator followed by
+# prose. These carry a real sub-section marker INSIDE the text with prefix/level
+# NULL (SDG targets under 'Goal N.', forest-plan targets, programme-plan subprogramme
+# paragraphs '19.1'..). The marker must move to `prefix`, the clause get a level, and
+# the text be stripped. Confirmation is SEQUENCE-BASED (see detect_dotted_enum): a
+# lone decimal that merely starts a sentence, an assessment-scale row ('0.01 Albania
+# ....'), or a statistics table ('5.5 5.4 Latin America') is NEVER promoted.
+DOTTED_ENUM_RE = re.compile(r"^(\d{1,3})\.(\d{1,2}|[a-z])\s+(\S.*)$")
+_DOT_LEADER_RE = re.compile(r"\.\s*\.\s*\.")   # TOC / assessment dot leaders
 
 # Split an annex/appendix delimiter into (label, numeral, inline-title). Only ever
 # called on lines that already matched ANNEX_RE, so the numeral token is trusted.
@@ -546,6 +567,88 @@ def detect_subres_blocks(lrows: list[LRow]) -> dict[int, dict]:
         if seen_open:
             blocks[i] = {"letter": m.group(1), "title_idx": title_idx}
     return blocks
+
+
+def _dotted_enum_candidate(c: str) -> tuple[int, str, int, str, str] | None:
+    """(major, kind, ord, prefix, rest) if `c` opens with a plausible dotted
+    enumerator ('1.1', '8.10', '1.a') followed by PROSE, else None.
+
+    Pure lexical screen (no sequence context yet): the regex self-rejects tabular
+    decimals ('2.983 745,750 ...' — no space after a 2+digit minor), and the guards
+    drop major-0 assessment rows ('0.01 Albania'), dot-leader/statistics rows, and
+    numeric-heavy fragments. detect_dotted_enum() then confirms only those that sit
+    in a coherent contiguous run, so a stray decimal opening a sentence never wins.
+    """
+    m = DOTTED_ENUM_RE.match(c)
+    if not m:
+        return None
+    major = int(m.group(1))
+    if major < 1:                      # assessment scales are 0.xx — never enumerators
+        return None
+    minor = m.group(2)
+    rest = m.group(3).strip()
+    if len(rest) < 15 or not rest[:1].isalpha():
+        return None
+    if _DOT_LEADER_RE.search(rest):    # 'Albania ....... .' country/TOC leaders
+        return None
+    head = rest[:40]
+    if sum(ch.isalpha() for ch in head) / len(head) < 0.55:   # numeric-heavy table row
+        return None
+    prefix = f"{major}.{minor}"
+    if minor.isdigit():
+        return (major, "num", int(minor), prefix, rest)
+    return (major, "let", ord(minor) - ord("a") + 1, prefix, rest)
+
+
+def _dotted_follows(a: tuple, b: tuple) -> bool:
+    """True if candidate b directly CONTINUES candidate a's enumerator sequence.
+
+    Same major: num->num (b=a+1), num->letter 'a' (1.5 -> 1.a), letter->letter next.
+    New major: only major+1 restarting at numeric .1 (1.b -> 2.1)."""
+    (amaj, akind, aord, *_), (bmaj, bkind, bord, *_) = a, b
+    if bmaj == amaj:
+        if akind == "num" and bkind == "num":
+            return bord == aord + 1
+        if akind == "num" and bkind == "let":
+            return bord == 1
+        if akind == "let" and bkind == "let":
+            return bord == aord + 1
+        return False
+    if bmaj == amaj + 1:
+        return bkind == "num" and bord == 1
+    return False
+
+
+def detect_dotted_enum(lrows: list["LRow"]) -> dict[int, tuple[str, int, str]]:
+    """Map lrow-index -> (prefix, level, stripped_text) for CONFIRMED dotted
+    enumerators (sem-v4). Confirmation = sequence: the candidate belongs to a
+    contiguous follows()-chain of length >=3 that STARTS at a numeric '.1'. This is
+    the SDG-target / forest-goal / programme-plan family; assessment tables and lone
+    decimals fail to chain and are left untouched (prefix/level stay NULL).
+    """
+    cand: list[tuple[int, tuple]] = []
+    for i, lr in enumerate(lrows):
+        if lr.kind != "paragraph" or not lr.clean:
+            continue
+        c = _dotted_enum_candidate(lr.clean)
+        if c is not None:
+            cand.append((i, c))
+    confirmed: dict[int, tuple[str, int, str]] = {}
+    k, m = 0, len(cand)
+    while k < m:
+        chain = [cand[k]]
+        j = k + 1
+        while j < m and _dotted_follows(cand[j - 1][1], cand[j][1]):
+            chain.append(cand[j])
+            j += 1
+        # a genuine enumerator run is >=3 long and opens at a numeric '.1'
+        head_kind, head_ord = chain[0][1][1], chain[0][1][2]
+        if len(chain) >= 3 and head_kind == "num" and head_ord == 1:
+            for idx, cc in chain:
+                _, _, _, prefix, rest = cc
+                confirmed[idx] = (prefix, 2, rest)
+        k = j
+    return confirmed
 
 
 # ---------------------------------------------------------------------------
@@ -888,6 +991,7 @@ def _stamp_annex_index(elements: list[dict]) -> None:
 def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
     lrows = build_logical_rows(raw_rows, fmt)
     subres = detect_subres_blocks(lrows)
+    dotted_enum = detect_dotted_enum(lrows)  # sem-v4: confirmed N.N / N.a enumerators
     # lrow indices whose positions are consumed by a block's merged title element
     title_skip: set[int] = set()
     for blk in subres.values():
@@ -1234,6 +1338,21 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
             i += 1
             continue
 
+        # 11c. dotted enumerator (sem-v4): a confirmed 'N.N'/'N.a' sub-section marker
+        # carried INSIDE the paragraph text (SDG targets under 'Goal N.', forest-plan
+        # targets, programme-plan '19.1' paragraphs). The pre-pass has verified this
+        # row sits in a coherent contiguous run, so the marker moves to `prefix`, the
+        # clause gets level=2, and the text is stripped. paragraph_type stays as it
+        # would otherwise be (None here — these are sub-heading content, not numbered
+        # resolution operatives), so operative counts are not inflated.
+        if i in dotted_enum:
+            d_prefix, d_level, d_rest = dotted_enum[i]
+            elements.append(_new_element(
+                lr, type="paragraph", section=section, paragraph_type=None,
+                level=d_level, prefix=d_prefix, text=d_rest, text_index=text_index))
+            i += 1
+            continue
+
         # 12. body heading (roman/letter/short heading-styled/bold-run-in line) --
         # sem-v3: split any leading section marker into `prefix`; a style heading
         # takes its tier from the style, a bold run-in label nests one level below
@@ -1470,6 +1589,27 @@ def _match_title(c: str, lr: LRow) -> tuple[str, str | None, str] | None:
     return None
 
 
+# A lettered/roman section heading with a descriptive title ('A. Mandate',
+# 'B. Advancing integration ...', 'III. Green economy ...'). Split so we can read
+# the title's first word.
+_MARKER_HEAD_RE = re.compile(r"^((?:[IVXLC]{1,4}|[A-Z])\.)\s+([A-Z]\S.*)$")
+
+
+def _marker_section_heading(c: str, lr: LRow) -> bool:
+    """sem-v4: a bold / heading-styled lettered-or-roman section heading whose title
+    may be LONG ('B. Advancing integration, implementation and coherence: ...',
+    'III. Green economy in the context of ...'). Requires bold OR an explicit heading
+    style; the title must NOT open with a finite operative/participial lead verb, so a
+    bold 'I. Decides that ...' / 'II. Recalling ...' stays a clause, never a heading."""
+    if not (lr.props.get("bold") or lr.style in BODY_HEADING_STYLES):
+        return False
+    m = _MARKER_HEAD_RE.match(c)
+    if not m:
+        return False
+    w0 = m.group(2).split(" ", 1)[0].strip(",.").lower()
+    return w0 not in OPERATIVE_LEAD_VERBS and w0 not in PREAMBULAR_FIRST_WORDS
+
+
 def _looks_like_heading(c: str, lr: LRow, state: str) -> bool:
     """Heuristic for a section heading inside the body (not title/opening)."""
     if state == "front":
@@ -1478,18 +1618,16 @@ def _looks_like_heading(c: str, lr: LRow, state: str) -> bool:
     # (these may be long, so they precede the length guard).
     if _style_is_heading(c, lr, state) or _bold_heading(c, lr, state):
         return True
+    # sem-v4: a bold/styled lettered-or-roman section heading with a (possibly long)
+    # descriptive title, guarded so bold operative clauses ('I. Decides ...') are not
+    # swallowed -- also precedes the length guard.
+    if _marker_section_heading(c, lr):
+        return True
     if len(c) > 80:
         return False
     # lone roman numeral or single capital letter (consolidated sub-res letter,
     # or numbered section heading within the operative part)
     if re.match(r"^[IVXLC]{1,4}\.?$", c) or re.match(r"^[A-Z]\.?$", c):
-        return True
-    # "A. Title" / "I. Title" style section heading -- accept when bold OR when the
-    # paragraph carries an explicit heading style (H23 etc.), so instrument-annex
-    # section headers ('A. Mandate', 'B. Objectives') that are not bold-flagged are
-    # still recognised and do not leak into preambular/operative labeling.
-    if re.match(r"^([IVXLC]{1,4}|[A-Z])\.\s+[A-Z]", c) and (
-            lr.props.get("bold") or lr.style in BODY_HEADING_STYLES):
         return True
     # explicit heading style, short, and centered/bold
     if lr.style in BODY_HEADING_STYLES and (lr.props.get("bold") or lr.props.get("alignment") == "center"):
