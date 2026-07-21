@@ -57,6 +57,7 @@ from fulltext_common import (
     write_state,
 )
 from fulltext_fetch import (
+    DECISION_FAMILY_RE,
     HTTP_TIMEOUT,
     JITTER_FRAC,
     MAX_RETRIES,
@@ -216,6 +217,37 @@ def targets_pre1994(conn) -> list[tuple[str, str]]:
         return [(row[0], row[1]) for row in cur.fetchall()]
 
 
+def targets_fallback_recent(conn, days: int) -> list[tuple[str, str]]:
+    """PDF fallback set for --fallback-recent: symbols whose WORD fetch came back
+    status='unavailable' and which are *recent* — document published within
+    `days` OR ledger row (re)touched within `days` (updated_at proxy; no
+    created_at column). We re-probe these as t=pdf; a hit means the freshly-
+    adopted doc has a PDF on ODS even though its Word source is not yet posted.
+
+    Rows already known PDF-unavailable (format='pdf') are excluded — we already
+    tried the PDF and it was absent. documents joined DISTINCT ON (recid DESC)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH d AS (
+              SELECT DISTINCT ON (symbol_normalized) symbol_normalized,
+                     date_publication, document_symbol
+              FROM digitallibrary.documents
+              ORDER BY symbol_normalized, recid DESC
+            )
+            SELECT f.symbol_normalized, COALESCE(d.document_symbol, f.symbol_normalized)
+            FROM digitallibrary.document_files f
+            LEFT JOIN d USING (symbol_normalized)
+            WHERE f.lang = 'en' AND f.status = 'unavailable'
+              AND (f.format IS NULL OR f.format <> 'pdf')
+              AND d.date_publication >= (now()::date - %s)
+            ORDER BY f.symbol_normalized
+            """,
+            [days],
+        )
+        return [(row[0], row[1]) for row in cur.fetchall()]
+
+
 def targets_from_file(conn, path: Path) -> list[tuple[str, str]]:
     """Read symbols (one per line) and resolve each to its canonical
     document_symbol via the catalog, preserving file order."""
@@ -260,6 +292,12 @@ def parse_args() -> argparse.Namespace:
                           "run only after the Word backfill completes)")
     src.add_argument("--recheck-unavailable", action="store_true",
                      help="re-probe every pdf ledger row currently status='unavailable'")
+    src.add_argument("--fallback-recent", type=int, metavar="N",
+                     help="PDF-fallback for the nightly: probe t=pdf for symbols whose "
+                          "WORD fetch is status='unavailable' and which are recent "
+                          "(published within N days, or ledger row touched within N days). "
+                          "A hit overwrites the row to status='fetched', format='pdf'; "
+                          "a miss leaves the existing 'unavailable' row untouched.")
     p.add_argument("--limit", type=int, help="stop after N targets")
     p.add_argument("--rate", type=float, default=DEFAULT_RATE,
                    help=f"seconds between requests (default {DEFAULT_RATE}; ±30%% jitter)")
@@ -269,26 +307,35 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if not (args.symbols_file or args.catalog or args.recheck_unavailable):
-        print("error: choose a source — --symbols-file, --catalog, or "
-              "--recheck-unavailable (no default, to prevent an accidental bulk run)",
-              file=sys.stderr)
+    fallback = args.fallback_recent is not None
+    if not (args.symbols_file or args.catalog or args.recheck_unavailable or fallback):
+        print("error: choose a source — --symbols-file, --catalog, "
+              "--recheck-unavailable, or --fallback-recent (no default, to prevent "
+              "an accidental bulk run)", file=sys.stderr)
         return 2
 
     with get_conn() as conn:
         already = load_already_done(conn)  # any status except 'failed'
         if args.recheck_unavailable:
             targets = targets_unavailable(conn)
+        elif fallback:
+            targets = targets_fallback_recent(conn, args.fallback_recent)
         elif args.symbols_file:
             targets = targets_from_file(conn, args.symbols_file)
         else:
             targets = targets_pre1994(conn)
         state = read_state(conn, STATE_KEY)
 
+    # Fallback probes freshly-adopted docs: skip GA/ECOSOC decision families that
+    # are structurally absent from ODS at the individual-symbol level.
+    if fallback:
+        targets = [(n, s) for (n, s) in targets if not DECISION_FAMILY_RE.match(n)]
+
     # Collapse DL bracket pseudo-symbols onto their parent (never request '[').
     targets, collapsed_brackets = dedupe_brackets(targets, already)
 
-    if args.recheck_unavailable:
+    # recheck/fallback deliberately revisit rows that are already in the ledger.
+    if args.recheck_unavailable or fallback:
         pending = list(targets)
     else:
         pending = [(n, s) for (n, s) in targets if n not in already]
@@ -296,6 +343,7 @@ def main() -> int:
         pending = pending[: args.limit]
 
     mode = ("recheck-unavailable" if args.recheck_unavailable
+            else f"fallback-recent-{args.fallback_recent}d" if fallback
             else "symbols-file" if args.symbols_file else "catalog")
     print(f"Mode: {mode} | format=pdf")
     print(f"Targets: {len(targets)} | already done: {len(already)} | to fetch: {len(pending)} "
@@ -359,17 +407,21 @@ def main() -> int:
             })
         elif outcome == "unavailable":
             unavailable += 1
-            buffer.append({
-                "symbol_normalized": norm, "status": "unavailable", "format": fmt,
-                "content_type": content_type, "ods_url": ods_url,
-                "size_bytes": len(content), "error": error,
-            })
+            # In fallback mode the row is ALREADY a word 'unavailable' row; a PDF
+            # miss must leave it untouched (only a hit overwrites it).
+            if not fallback:
+                buffer.append({
+                    "symbol_normalized": norm, "status": "unavailable", "format": fmt,
+                    "content_type": content_type, "ods_url": ods_url,
+                    "size_bytes": len(content), "error": error,
+                })
         else:
             failed += 1
-            buffer.append({
-                "symbol_normalized": norm, "status": "failed",
-                "ods_url": ods_url, "content_type": None, "error": error,
-            })
+            if not fallback:
+                buffer.append({
+                    "symbol_normalized": norm, "status": "failed",
+                    "ods_url": ods_url, "content_type": None, "error": error,
+                })
 
         # Misses are genuine ODS absences (pre-1994 gaps cluster); only real
         # block signals (429/403/resets) count toward the circuit breaker.

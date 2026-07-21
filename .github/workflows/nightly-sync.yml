@@ -28,3 +28,16 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: uv run python python/harvest_incremental.py
+
+      # Full-text pipeline runs in the SAME job, right after the harvest, so
+      # digitallibrary.documents is fresh. The archive root is runner-temp
+      # (ephemeral): files fetched tonight are gated here and now; the DB is
+      # authoritative. Bring the SSD archive up to date locally afterwards with
+      # `fulltext_fetch.py --sync-archive`. A blocked conversion or a failed
+      # acceptance gate makes this step exit non-zero -> the workflow fails ->
+      # email. See docs/fulltexts.md -> Nightly automation.
+      - name: Run fulltext pipeline
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FULLTEXT_ARCHIVE_ROOT: ${{ runner.temp }}/fulltext-archive
+        run: uv run python python/fulltext_nightly.py

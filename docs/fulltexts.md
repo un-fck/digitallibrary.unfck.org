@@ -307,6 +307,96 @@ uv run python python/fulltext_pipeline.py --workers 8
 uv run python python/fulltext_verify_text.py
 ```
 
+## Nightly automation
+
+`python/fulltext_nightly.py` is the CI-driven top-to-bottom automation: it runs
+the **whole** pipeline once per night, in the **same GitHub job** as (and right
+after) the metadata harvest, so a freshly-adopted resolution gets its full text
+the same night. It is a thin orchestrator that shells out to the exact same stage
+scripts a human runs locally (`uv run python python/<stage>.py`) — **DRY: the
+nightly and local runs share one implementation.** It differs from
+`fulltext_pipeline.py` only in that it *includes* the fetch stages and enforces
+CI failure semantics.
+
+### The flow
+
+| # | stage | command | targets |
+|---|-------|---------|---------|
+| a | fetch-new | `fulltext_fetch.py --catalog --rate 1.5` | brand-new catalog symbols (self-targeting; a no-op when the corpus is current) |
+| b | recheck-recent | `fulltext_fetch.py --recheck-recent-days 45` | `unavailable` rows published — or first seen — in the last 45 days (freshly adopted docs lag ODS by days-to-weeks) |
+| c | pdf-fallback | `fulltext_fetch_pdf.py --fallback-recent 45 --rate 1.8` | recent `unavailable` (word-missing) symbols, re-probed as `t=pdf`; a hit overwrites to `fetched`/`pdf` |
+| d | convert | native docx flagged in-process; `fulltext_convert.py` **iff** doc/wpd waiting **and** soffice present | see below |
+| e | extract | `fulltext_extract_raw.py` | `status='converted'` → `extracted` |
+| f | extract-pdf | `fulltext_extract_pdf.py` | `status='fetched'` pdf → `extracted` |
+| g | parse | `fulltext_parse.py --to-db --limit <newly-extracted + 50>` | extracted-first, so it targets tonight's docs |
+| h | gate | `fulltext_verify_text.py --symbols <tonight's docx docs>` + `fulltext_verify_pdf.py --symbols <tonight's pdf docs>` | text-preservation acceptance |
+
+Each stage prints its own summary row; a final **night summary** reports `new`,
+`rechecked-rescued`, `pdf-fallback-rescued`, `converted`/blocked, `extracted`,
+`parsed`, gate pass/fail, and absences recorded.
+
+`--recheck-recent-days N` / `--fallback-recent N` select `unavailable` rows whose
+document `date_publication` is within N days — deliberately publication-date-only.
+Freshly adopted documents lag ODS by days-to-weeks (this is what the window is
+for); late-HARVESTED older records have no ledger row yet and are picked up by
+the fetch-new stage instead. An `updated_at`-based window was rejected: right
+after a backfill it would sweep thousands of historical absences into every
+nightly run and blow the CI time budget.
+
+### Native docx flagging vs. LibreOffice
+
+`extract_raw` only takes `status='converted'`, so native docx (`fetched`) must be
+flagged `converted` first. `fulltext_convert.py` does that (`flag_native_docx`) —
+but it calls `find_soffice()` **first** and aborts if LibreOffice is missing,
+which is the normal CI state. Since **2023+ docs are 100 % native docx**, the
+nightly therefore flags native docx **in-process** (a pure SQL `UPDATE`, imported
+from `fulltext_convert`) and only shells out to the converter for the rare legacy
+`doc`/`wpd` files, which genuinely need LibreOffice. The convert decision
+(`decide_convert(pending_docwpd, soffice)`) is a pure, unit-tested function
+(`fulltext_nightly.py --self-test`).
+
+### Conversion-blocked failure semantics
+
+If legacy `doc`/`wpd` files are waiting **and** `soffice` is not on PATH, the
+nightly records **CONVERSION-BLOCKED**: it does **not** convert, it **does** run
+every remaining stage (native docx already flowed), and it prints a clear final
+line and **exits non-zero at the very end** — which fails the GitHub workflow and
+sends an email. It never exits early. Clear a blocked night with a **local** run
+that has LibreOffice (`uv run python python/fulltext_pipeline.py`), then re-run the
+gates. A **gate failure** likewise prints everything and then exits non-zero.
+`fulltext_nightly.py` exits `0` **only** when no conversion was blocked, all gates
+passed, and no stage subprocess failed.
+
+### CI archive semantics (ephemeral)
+
+The workflow sets `FULLTEXT_ARCHIVE_ROOT=${{ runner.temp }}/fulltext-archive`
+(CI has no SSD). `fulltext_nightly.py` `mkdir`s `original/` and `converted/` under
+it at startup. This archive is **ephemeral** — it exists only for the job. Files
+fetched **tonight** are present, so tonight's docs are fetched → extracted →
+parsed → **gated** end-to-end in the one job; the parsed JSON the gates read
+(`parsed_dev/`) is written to the same runner-temp and consumed immediately (so
+stage g does **not** pass `--db-only`). The **DB is authoritative**; the SSD
+archive is authoritative-of-files. Bring the local SSD archive up to date with:
+
+```bash
+uv run python python/fulltext_fetch.py --sync-archive   # local-only; re-downloads any
+                                                        # archived original missing on disk
+```
+
+`--sync-archive` is deliberately **not** part of the nightly (it would try to
+re-download the whole corpus into runner-temp every night). It handles both Word
+and PDF rows (routing `t=pdf` for `format='pdf'`), so the Word fetcher covers it
+and `fulltext_fetch_pdf.py` needs no `--sync-archive` of its own.
+
+> **Precondition before enabling the workflow (current state):** the nightly runs
+> the frozen extract/parse stages over **all** `fetched`/`converted` rows. Because
+> the CI archive is ephemeral, any such **backlog** whose files live only on the
+> SSD (e.g. the in-flight pre-1994 PDF backfill) would be marked `extract_failed`
+> the first time the nightly runs in CI. **Drain the backlog locally** (extract +
+> parse everything, so no `fetched`/`converted` rows remain) before turning the
+> workflow on. In steady state the only `fetched` rows are tonight's fetches,
+> whose files are present, and this is a non-issue.
+
 ## PDF path (pre-1994)
 
 The ~17.7k documents published before 1994 have **no Word source** on ODS — only
@@ -463,6 +553,7 @@ two-pager passes on the small region it does anchor), or anything about a
 | `python/fulltext_extract_raw.py` | Stage 3 — docx → `document_paragraphs_raw` (raw layer) |
 | `python/fulltext_parse.py` | Stage 4 — semantic parse → `parsed_dev/*.json` and, with `--to-db`, the semantic tables |
 | `python/fulltext_pipeline.py` | Top-up orchestrator: convert → extract_raw → parse `--to-db` |
+| `python/fulltext_nightly.py` | **Nightly automation** (CI): fetch-new → recheck-recent → pdf-fallback → convert → extract(+pdf) → parse → acceptance gates; conversion-blocked/gate-failure → non-zero exit → email |
 | `python/fulltext_parse_metrics.py` | Accounting/metrics report + cross-check vs legacy `mandates.paragraphs` |
 | `python/fulltext_review.py` | Two-column raw\|parsed HTML review harness + `_flags.json` |
 | `sql/schema/fulltext_tables.sql` / `sql/migrations/003_add_semantic_paragraphs.sql` | Semantic layer DDL (`document_paragraphs`, `document_parses`) |

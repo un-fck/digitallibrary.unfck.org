@@ -253,6 +253,58 @@ def targets_unavailable(conn) -> list[tuple[str, str]]:
     return [(n, canonical.get(n, n)) for n in norms]
 
 
+def targets_recheck_recent(conn, days: int) -> list[tuple[str, str]]:
+    """Re-probe set for --recheck-recent-days: ledger rows currently
+    status='unavailable' whose underlying document was PUBLISHED within `days`
+    (freshly adopted docs lag ODS by days-to-weeks).
+
+    Deliberately date_publication-only: an updated_at window would sweep in the
+    thousands of historical absences recorded during a backfill and blow the CI
+    time budget, while adding nothing — late-HARVESTED old records have no
+    ledger row at all and are picked up by the fetch-new stage instead.
+
+    documents is joined on symbol_normalized, DISTINCT ON (recid DESC)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH d AS (
+              SELECT DISTINCT ON (symbol_normalized) symbol_normalized, date_publication
+              FROM digitallibrary.documents
+              ORDER BY symbol_normalized, recid DESC
+            )
+            SELECT f.symbol_normalized
+            FROM digitallibrary.document_files f
+            LEFT JOIN d USING (symbol_normalized)
+            WHERE f.lang = 'en' AND f.status = 'unavailable'
+              AND d.date_publication >= (now()::date - %s)
+            ORDER BY f.symbol_normalized
+            """,
+            [days],
+        )
+        norms = [row[0] for row in cur.fetchall()]
+    canonical = resolve_document_symbols(conn, norms)
+    return [(n, canonical.get(n, n)) for n in norms]
+
+
+def targets_sync_archive(conn) -> list[tuple[str, str, str, str, str | None]]:
+    """Ledger rows whose archived ORIGINAL file is missing from ARCHIVE_ROOT.
+
+    Selects status IN ('fetched','converted','extracted','parsed') with a
+    non-NULL archive_path, then keeps only those whose file does not exist on
+    disk. Returns [(symbol_normalized, format, archive_path, status, sha256)]."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT symbol_normalized, format, archive_path, status, sha256 "
+            "FROM digitallibrary.document_files "
+            "WHERE lang = 'en' AND archive_path IS NOT NULL "
+            "AND status IN ('fetched','converted','extracted','parsed') "
+            "ORDER BY symbol_normalized"
+        )
+        rows = cur.fetchall()
+    return [(r[0], r[1], r[2], r[3], r[4]) for r in rows
+            if not (ARCHIVE_ROOT / r[2]).exists()]
+
+
 def dedupe_brackets(
     targets: list[tuple[str, str]], already: set[str]
 ) -> tuple[list[tuple[str, str]], int]:
@@ -295,17 +347,22 @@ def _is_conn_reset(exc: Exception) -> bool:
 
 
 def fetch_ods(
-    session: requests.Session, document_symbol: str, run: RunState
+    session: requests.Session, document_symbol: str, run: RunState, t: str = "doc"
 ) -> tuple[int, bytes, str]:
     """GET the ODS file for a symbol. Retries (exp backoff) on connection
     errors, 5xx, and empty bodies. On HTTP 429/403 or a connection reset it
     pauses BLOCK_PAUSE before retrying and bumps run.block_hits. Returns
-    (status_code, content, content_type)."""
+    (status_code, content, content_type).
+
+    `t` selects the ODS format token: 'doc' (default, the Word path) or 'pdf'.
+    The pseudo-redirect follow below only fires on the `t=pdf` archive bodies
+    ('Found. Redirecting to /doc/UNDOC/...'); a Word (t=doc) response never
+    starts with that marker, so the default path is byte-for-byte unchanged."""
     # ODS requires %20 for spaces in the symbol; requests' params dict would
     # encode them as '+', which redirects to the /error page (looks identical
     # to "document not found"). Build the query string ourselves.
     query = urllib.parse.urlencode(
-        {"s": document_symbol, "l": "en", "t": "doc"},
+        {"s": document_symbol, "l": "en", "t": t},
         quote_via=urllib.parse.quote,
     )
     url = f"{ODS_URL}?{query}"
@@ -328,6 +385,16 @@ def fetch_ods(
                 raise requests.RequestException(f"server {resp.status_code}")
             if resp.status_code == 200 and not content:
                 raise requests.RequestException("empty body")
+            # ODS pseudo-redirect (archive PDFs): 200 text/plain
+            # "Found. Redirecting to /doc/UNDOC/.../NRxxxxx.PDF". Follow it with
+            # a second GET. Never triggers on the Word (t=doc) path.
+            if content.startswith(b"Found. Redirecting to "):
+                path = content.decode("ascii", "ignore").split("Redirecting to ", 1)[1].strip()
+                if path.startswith("/"):
+                    run.requests += 1
+                    nap(1.0)
+                    resp = session.get(f"https://documents.un.org{path}", timeout=HTTP_TIMEOUT)
+                    content = resp.content
             return resp.status_code, content, resp.headers.get("Content-Type", "")
         except (requests.RequestException, OSError) as exc:
             last_exc = exc
@@ -396,13 +463,100 @@ def save_atomic(dest: Path, data: bytes) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
+def run_sync_archive(args: argparse.Namespace) -> int:
+    """Bring the local SSD archive back in sync with the ledger.
+
+    For every ledger row (fetched/converted/extracted/parsed) whose archive_path
+    file is missing on disk, re-download the original from ODS (same politeness)
+    and save it to archive_path. Word rows use t=doc, PDF rows (format='pdf')
+    route to t=pdf with the pseudo-redirect follow. The LEDGER IS NOT CHANGED
+    except updated_at (always) and sha256 (only when the re-downloaded bytes
+    differ) — status/paths are preserved. Local-only; not part of the nightly."""
+    with get_conn() as conn:
+        missing = targets_sync_archive(conn)
+        canonical = resolve_document_symbols(conn, [m[0] for m in missing])
+
+    print(f"Mode: sync-archive | ARCHIVE_ROOT={ARCHIVE_ROOT}")
+    print(f"Ledger rows with a missing archive file: {len(missing)}")
+    if args.dry_run:
+        for norm, fmt, rel, status, _ in missing[:12]:
+            print(f"  would re-download: {canonical.get(norm, norm)} "
+                  f"[{fmt}/{status}] -> {rel}")
+        if len(missing) > 12:
+            print(f"  ... and {len(missing) - 12} more")
+        return 0
+    if not missing:
+        print("Archive is already in sync with the ledger.")
+        return 0
+
+    session = requests.Session()
+    session.headers["User-Agent"] = USER_AGENT
+    run = RunState()
+    restored = 0
+    changed = 0
+    still_missing = 0
+    total = len(missing)
+    for i, (norm, fmt, rel, status, old_sha) in enumerate(missing):
+        document_symbol = canonical.get(norm, norm)
+        t = "pdf" if fmt == "pdf" else "doc"
+        try:
+            status_code, content, _ = fetch_ods(session, document_symbol, run, t=t)
+        except requests.RequestException as exc:
+            still_missing += 1
+            print(f"  ! {document_symbol}: fetch failed: {exc}", file=sys.stderr)
+            if i != total - 1:
+                nap(args.rate)
+            continue
+        sniffed = sniff_format(content[:512])
+        if status_code != 200 or sniffed in ("html", "unknown"):
+            still_missing += 1
+            print(f"  ! {document_symbol}: HTTP {status_code}/{sniffed} — cannot "
+                  f"restore {rel}", file=sys.stderr)
+        else:
+            save_atomic(ARCHIVE_ROOT / rel, content)
+            new_sha = sha256_bytes(content)
+            restored += 1
+            with get_conn() as conn:
+                if new_sha != (old_sha or ""):
+                    changed += 1
+                    upsert_document_file(conn, norm, "en", status=status, sha256=new_sha)
+                else:
+                    upsert_document_file(conn, norm, "en", status=status)
+                conn.commit()
+        done = i + 1
+        if done % PROGRESS_EVERY == 0 or done == total:
+            print(f"synced {done}/{total} restored={restored} changed={changed} "
+                  f"still_missing={still_missing} | {run.requests} reqs, "
+                  f"{run.per_hour():.0f}/h")
+        if i != total - 1:
+            nap(args.rate)
+
+    print(f"\nDone. restored {restored}/{total} archive files "
+          f"({changed} with changed sha256, {still_missing} still missing).")
+    return 0
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Fetch English Word files from ODS")
+    p.add_argument("--catalog", action="store_true",
+                   help="explicitly select the in-scope catalog (this is already the "
+                        "default when no other source is given; the flag documents intent "
+                        "and mirrors fulltext_fetch_pdf.py)")
     p.add_argument("--symbols-file", type=Path,
                    help="newline-separated document symbols to fetch (priority order)")
     p.add_argument("--recheck-unavailable", action="store_true",
                    help="re-probe every ledger row currently status='unavailable' "
                         "(slow second pass to recover soft-blocked docs)")
+    p.add_argument("--recheck-recent-days", type=int, metavar="N",
+                   help="re-probe only 'unavailable' rows whose document was published "
+                        "within N days OR whose ledger row was (re)touched within N days "
+                        "(updated_at proxy — no created_at column). For the nightly: "
+                        "recover freshly-adopted docs that ODS published after we first "
+                        "probed. Decision-family exclusions still apply.")
+    p.add_argument("--sync-archive", action="store_true",
+                   help="LOCAL-ONLY: re-download any archived original that is missing "
+                        "from ARCHIVE_ROOT (fetched/converted/extracted/parsed rows). "
+                        "Ledger unchanged except updated_at/sha256. Not part of the nightly.")
     p.add_argument("--limit", type=int, help="stop after N targets")
     p.add_argument("--rate", type=float, default=DEFAULT_RATE,
                    help=f"seconds to sleep between requests (default {DEFAULT_RATE}; "
@@ -415,16 +569,27 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
-    if args.recheck_unavailable and args.symbols_file:
-        print("error: --recheck-unavailable and --symbols-file are mutually exclusive",
-              file=sys.stderr)
+    # --sync-archive is a standalone maintenance mode with its own flow.
+    if args.sync_archive:
+        return run_sync_archive(args)
+
+    sources = sum(bool(x) for x in (
+        args.symbols_file, args.recheck_unavailable,
+        args.recheck_recent_days is not None))
+    if sources > 1:
+        print("error: --symbols-file, --recheck-unavailable and --recheck-recent-days "
+              "are mutually exclusive", file=sys.stderr)
         return 2
+
+    is_recheck = args.recheck_unavailable or args.recheck_recent_days is not None
 
     # Build the target list and the skip set with one short-lived connection.
     with get_conn() as conn:
         already = load_already_done(conn)
         if args.recheck_unavailable:
             targets = targets_unavailable(conn)
+        elif args.recheck_recent_days is not None:
+            targets = targets_recheck_recent(conn, args.recheck_recent_days)
         elif args.symbols_file:
             targets = targets_from_file(conn, args.symbols_file)
         else:
@@ -446,7 +611,7 @@ def main() -> int:
     # Collapse DL bracket pseudo-symbols onto their parent (never request '[').
     targets, collapsed_brackets = dedupe_brackets(targets, already)
 
-    if args.recheck_unavailable:
+    if is_recheck:
         pending = list(targets)  # these ARE the 'unavailable' rows — re-probe them
     else:
         pending = [(n, s) for (n, s) in targets if n not in already]
@@ -454,6 +619,8 @@ def main() -> int:
         pending = pending[: args.limit]
 
     mode = ("recheck-unavailable" if args.recheck_unavailable
+            else f"recheck-recent-{args.recheck_recent_days}d"
+            if args.recheck_recent_days is not None
             else "symbols-file" if args.symbols_file else "catalog")
     print(f"Mode: {mode}")
     print(f"Targets: {len(targets)} | already done: {len(already)} | "
