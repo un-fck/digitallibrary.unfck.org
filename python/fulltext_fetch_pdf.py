@@ -208,6 +208,9 @@ def targets_pre1994(conn) -> list[tuple[str, str]]:
                 AND (date_publication IS NULL OR date_publication < %s)
                 AND (cardinality(languages) = 0 OR 'eng' = ANY(languages))
                 AND symbol_normalized ~ %s
+                -- GA/ECOSOC decisions are compilation-only on ODS: never probe
+                -- individually (recovered via the volume-split pipeline instead).
+                AND symbol_normalized !~ '^(A/DEC/|E/DEC/)'
               ORDER BY symbol_normalized, recid DESC
             ) t
             ORDER BY date_publication DESC NULLS LAST, symbol_normalized

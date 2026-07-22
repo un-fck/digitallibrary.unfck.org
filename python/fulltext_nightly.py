@@ -298,6 +298,18 @@ def main() -> int:
         else:
             results.append(("gate-pdf", "skipped", 0.0))
 
+    # -- i. volume-split (late stage) ----------------------------------------
+    # Recover GA/ECOSOC decisions from the born-digital compilation volumes that DL
+    # harvests ~yearly. Self-contained subprocess sequence (fetch -> extract-pdf ->
+    # split -> parse children -> volume gate); the fetch mode skips volumes already
+    # present and the split's sha256-gate skips unchanged volumes, so this is a
+    # cheap no-op on a night with no new supplement. Early-HRC Word reports are a
+    # one-time local backfill (LibreOffice-dependent), not part of the nightly.
+    vol_before = n_status(snapshot(), "parsed")
+    rc, dt = run_stage("volume-split", "python/fulltext_split_volumes.py", ["--nightly"])
+    record("volume-split", rc, dt)
+    metrics["volume_children_parsed"] = max(0, n_status(snapshot(), "parsed") - vol_before)
+
     # -- stage summary table -------------------------------------------------
     print("\n=== stage summary ===")
     print(f"{'stage':<15} {'result':<9} {'seconds':>9}")
@@ -316,6 +328,7 @@ def main() -> int:
           + (f"  (BLOCKED: {metrics['blocked_docwpd']} doc/wpd)" if blocked else ""))
     print(f"  extracted              : {metrics['extracted']}")
     print(f"  parsed                 : {metrics['parsed']}")
+    print(f"  volume children parsed : {metrics.get('volume_children_parsed', 0)}")
     print(f"  gates                  : {gate_str}")
     print(f"  absences recorded      : {metrics['absences_recorded']}")
 

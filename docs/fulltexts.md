@@ -61,10 +61,11 @@ structurally absent from ODS (verified by hand, 0/85 fetched in the sample run):
 - **`A/DEC/*` and `E/DEC/*` (GA and ECOSOC decisions).** Decisions are not issued
   as standalone ODS documents — they are only published inside *compilation
   volumes* (e.g. the GA "Resolutions and Decisions" fascicles). Fetching them at
-  the individual-symbol level cannot work. **Future work:** a compilation-volume
-  approach (fetch the volume, then split decisions out) is needed to cover
-  decisions full text; it is not built yet. They remain reachable via
-  `--symbols-file` if you list them explicitly.
+  the individual-symbol level cannot work. Their full text is instead recovered
+  by the **volume-split pipeline** (`python/fulltext_split_volumes.py`, see the
+  *Volume-split pipeline* section below): fetch the born-digital compilation
+  volume, extract it, then split decisions out into child rows. They remain
+  reachable via `--symbols-file` too if you list them explicitly.
 
 Not excluded, but expect misses: **early Human Rights Council sessions** (roughly
 `A/HRC/RES/1/*` through `A/HRC/RES/11/*`, 2006–2009) are mostly absent from ODS
@@ -541,6 +542,150 @@ prove: that a crop boundary is semantically perfect (an under-cropped bilingual
 two-pager passes on the small region it does anchor), or anything about a
 `none`-class pure scan (excluded before it reaches the gate).
 
+## Volume-split pipeline (GA/ECOSOC decisions, early HRC)
+
+Two families are structurally absent from ODS at the individual-symbol level and
+so were excluded from the 8-family catalog (see *Corpus definition*): GA/ECOSOC
+**decisions** (`A/DEC/*`, `E/DEC/*`) and the **early Human Rights Council** texts
+of sessions 2-11 (`A/HRC/RES|PRST|DEC/2..11/*`). Their full text is only published
+inside compilation **volumes** / session **reports** that ODS and DL *do* host.
+The volume-split pipeline recovers them: fetch the parent, extract it as an
+ordinary doc, then split the per-child paragraphs back out.
+
+### Sources (the parent documents)
+
+| Children | Parent | Symbol | Format |
+|----------|--------|--------|--------|
+| GA decisions (`A/DEC/<n>/<m>`) | GAOR Suppl. 49, Volume II | `A/<n>/49 (Vol. II)` | PDF |
+| ECOSOC res+dec (`E/RES`/`E/DEC/<y>/<m>`) | ECOSOC Suppl. 1 | `E/<y>/99` | PDF |
+| early HRC res/dec/PRST | per-session HRC report | see the HRC map below | Word (`.doc`) |
+
+The **HRC report map** (session → sessional report symbol that carries that
+session's adopted texts):
+
+```
+2:A/HRC/2/9  3:A/HRC/3/7  4:A/HRC/4/123  5:A/HRC/5/21  6:A/HRC/6/22
+7:A/HRC/7/78  8:A/HRC/8/52  9:A/HRC/9/28  10:A/HRC/10/29  11:A/HRC/11/37
+special sessions S-2 .. S-11:  A/HRC/S-<n>/2
+```
+
+### `source_symbol` semantics (migration 005)
+
+`source_symbol` (added to `document_files` **and** `document_paragraphs_raw`)
+records, on a split **child** row, the parent volume/report symbol it was carved
+from. A child ledger row never gets an `archive_path` of its own (the parent
+volume owns the file) and runs the normal status lifecycle from `extracted` on.
+The parent volume itself is an ordinary ledger doc (`source_symbol` NULL,
+`archive_path` set) that is retired to a terminal status **`split`** after a
+successful split, so the resolution parser and the docx/pdf gates never treat the
+227-page compilation as a single resolution. Re-split key: the split
+`DELETE ... WHERE source_symbol = <volume>` then re-inserts, so it is idempotent.
+`source_symbol` is NULL for every ordinary (non-split) row — the 8-family catalog
+is unchanged. The pre-existing 3,233 `A/DEC`/`E/DEC` `unavailable` ledger rows are
+UPDATEd in place to `extracted` + `source_symbol` on a successful split (their
+prior fetch history is not needed).
+
+### Era scope — born-digital cutoff (STEP-0 probe sweep)
+
+Only born-digital / text-layer volumes are in scope; the pre-era volumes are pure
+**image scans** (`fulltext_extract_pdf` triage class `none`) and are DEFERRED for a
+future OCR pass, exactly like the pre-1994 scans. `--probe` triages the archived
+volume PDFs; the measured cutoff (chars/page jumps from ~1 to ~2600-4500 at the
+boundary — an unambiguous scan→born-digital transition):
+
+| Family | In scope (`text`) | Scans (`none`, deferred) |
+|--------|-------------------|--------------------------|
+| GA Vol II | session **≥ 57** (`A/57/49(Vol.II)`, 2003) | ≤ 55 (2001 and earlier) |
+| ECOSOC Suppl. 1 | year **≥ 2003** (`E/2003/99`) | ≤ 2002 |
+
+This **overrides** the initial assumption (GA ≥ 49 / ECOSOC ≥ 1994 — those turned
+out to be scans). In-scope children in the catalog: ~**2,461** `A/DEC` (sessions
+57-80) + ~**1,843** `E/DEC` (2003-2025) + **179** early HRC. (`GA_VOL2_MIN_SESSION`,
+`ECOSOC_MIN_YEAR` in `fulltext_split_volumes.py` encode the cutoff.)
+
+### Split predicates
+
+- **GA/ECOSOC (PDF)** — a body-heading line `^<sess>/<num>[<Letter>]. <Titlecase…>`
+  (`pdf_heading`), **excluding dot-leader TOC/checklist lines** (`.... 47`). GA
+  `sess` is the session (`80/506` → `A/DEC/80/506`; `80/544 A` → `A/DEC/80/544A`);
+  ECOSOC `sess` is the year (`2025/201` → candidate `E/DEC/2025/201` *or*
+  `E/RES/2025/201`). Each heading appears **twice** in a volume (full body + a
+  bare-heading checklist entry); the split **dedupes per child, keeping the
+  longest (substantive) slice**.
+- **HRC (docx)** — a paragraph styled **Heading 2** whose text matches
+  `^(PRST/|DEC/)?(S-<n>|<n>)/<m>.` (`hrc_heading` + `is_heading2`). Annex roman
+  subheads are also Heading 2 but don't match the pattern. `PRST/6/1.` →
+  `A/HRC/PRST/6/1`; `7/1.` → `A/HRC/RES/7/1` (or `A/HRC/DEC/7/1`); `S-2/1.` →
+  `A/HRC/RES/S-2/1`.
+
+**Routing / gap set.** A derived child is **written** only if its symbol is in the
+DL catalog and lacks full text (the gap). ECOSOC resolutions (`E/RES/*`) that a
+volume interleaves are a **free cross-check** — measured by the gate, never
+overwritten (the Word path already parsed them). `RES` vs `DEC` and part-decisions
+are disambiguated by catalog membership. Headings whose exact symbol is not in the
+catalog (e.g. `80/408`, present only as `80/408 A`/`B`; the `2025/200` election
+decisions ECOSOC does not symbol) are **reported as unmatched**, not written.
+
+### The volume gate (`fulltext_verify_volumes.py`)
+
+Independent re-extraction of the archived file (pymupdf plain `get_text` for PDF,
+python-docx paragraph text for HRC — a **different** code path than the split's
+extractor) builds a ground-truth token bag for the **decisions section** (first
+routed heading → end, dropping dot-leader TOC lines and running headers). The
+union of the volume's children **+ allowed-drop** (front matter, TOC/checklist,
+running headers, catalog-absent decisions, cross-check/existing decisions, HRC
+Part-Two proceedings — i.e. every volume row not routed into a child) must account
+for it. Because a child slice always runs heading-to-next-heading, a child can
+never be **truncated**, so a decisions-section token absent from the bag is a
+genuine extraction loss. Plus a **boundary-leak** check (a child body must not
+contain the next child's heading) and a **DB round-trip** check (written child
+tokens == the split's slice tokens). Nonzero exit on failure; default bar 0.97.
+Measured on the born-digital sample: **GA `A/80/49(Vol.II)` 1.000**, **ECOSOC
+`E/2025/99` 0.985** (residual = foreign-language NGO names dropped by the PDF
+extractor's French-facing-line filter, not a split defect).
+
+### Runbook
+
+All local (SSD archive), `DATABASE_URL` in `.env`. **Apply migration 005 first**
+(owner privilege — the `document_files`/`document_paragraphs_raw` tables are owned
+by `un80devpgadmin80`, like migrations 002-004):
+
+```bash
+psql "$DATABASE_URL" -f sql/migrations/005_source_symbol.sql   # as the table owner
+
+# STEP 0 — probe the born-digital cutoff (reads archived volume PDFs)
+uv run python python/fulltext_split_volumes.py --probe
+
+# 1. Fetch the parents. GA/ECOSOC: ODS t=pdf first, DL English URL as fallback.
+uv run python python/fulltext_split_volumes.py --fetch                 # all volumes
+uv run python python/fulltext_split_volumes.py --fetch --symbols 'A/80/49(VOL.II)'
+#    HRC Word reports are fetched by the same command (it shells out to
+#    fulltext_fetch.py --symbols-file), then need LibreOffice to convert .doc:
+uv run python python/fulltext_convert.py
+
+# 2. Extract the parents with the SAME extractors the catalog uses (the volume
+#    symbol falls outside their crop targets, so they keep the whole volume text):
+uv run python python/fulltext_extract_pdf.py --symbols <ga/ecosoc vols>   # PDF
+uv run python python/fulltext_extract_raw.py --symbols <hrc reports>      # docx
+
+# 3. Split — write child raw rows + child ledger rows; retire the volume to 'split'.
+uv run python python/fulltext_split_volumes.py --split
+uv run python python/fulltext_split_volumes.py --split --symbols 'A/80/49(VOL.II)' --dry-run
+
+# 4. Parse the children (ordinary parse; children are status='extracted'):
+uv run python python/fulltext_parse.py --to-db
+
+# 5. Volume acceptance gate:
+uv run python python/fulltext_verify_volumes.py
+```
+
+Iterate per the project discipline: after the first volume of a type, eyeball a
+few children (`fulltext_review.py --symbols A/DEC/80/506 ...`) before the bulk.
+The **nightly** runs the GA/ECOSOC track (`--nightly`, PDF-only, CI-safe) as a
+late stage; the sha256-gate (`harvest_state` key `volume_splits`) makes it a cheap
+no-op until DL harvests a new supplement. The HRC track is a one-time local
+backfill (LibreOffice-dependent, historical set), not part of the nightly.
+
 ## Files
 
 | File | Role |
@@ -564,6 +709,9 @@ two-pager passes on the small region it does anchor), or anything about a
 | `python/fulltext_fetch_pdf.py` | PDF path stage 1 — fetch pre-1994 PDFs from ODS (`t=pdf`); separate backfill |
 | `python/fulltext_extract_pdf.py` | PDF path stage 2 — pymupdf PDF → `document_paragraphs_raw` (triage, header-drop, crop, `pdf-v1`) |
 | `python/fulltext_verify_pdf.py` | PDF path **acceptance gate** — pdftotext(region)→parsed preservation check |
+| `sql/migrations/005_source_symbol.sql` | Idempotent delta — `source_symbol` on `document_files` + `document_paragraphs_raw` (volume-split provenance) |
+| `python/fulltext_split_volumes.py` | **Volume-split pipeline** — catalog/HRC map, `--probe` cutoff sweep, `--fetch` (ODS t=pdf → DL fallback), `--split` (write children, `split-v1`, sha256-gate), `--nightly` |
+| `python/fulltext_verify_volumes.py` | **Volume acceptance gate** — independent file re-extraction vs children-union coverage + boundary-leak + DB round-trip |
 
 ## Semantic layer policies
 

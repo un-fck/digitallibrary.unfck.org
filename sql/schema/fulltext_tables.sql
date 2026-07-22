@@ -35,11 +35,14 @@ CREATE TABLE IF NOT EXISTS digitallibrary.document_files (
   error             TEXT,
   fetched_at        TIMESTAMPTZ,
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  source_symbol     TEXT,                         -- volume-split children: the parent volume/report symbol they were carved from (migration 005); NULL for ordinary docs. A child row never gets an archive_path (the parent volume owns the file) and runs the normal status lifecycle from 'extracted' on.
   PRIMARY KEY (symbol_normalized, lang)
 );
 
 CREATE INDEX IF NOT EXISTS idx_document_files_status ON digitallibrary.document_files (status);
 CREATE INDEX IF NOT EXISTS idx_document_files_format ON digitallibrary.document_files (format);
+CREATE INDEX IF NOT EXISTS idx_document_files_source_symbol
+  ON digitallibrary.document_files (source_symbol) WHERE source_symbol IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- Raw paragraph extraction: preserves document order + low-level formatting
@@ -60,11 +63,14 @@ CREATE TABLE IF NOT EXISTS digitallibrary.document_paragraphs_raw (
   footnote_ref      JSONB,                        -- kind='footnote': {"ref_position":int,"note_id":int}; paragraphs w/ refs: list of note ids
   extractor_version TEXT NOT NULL,
   extracted_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  source_symbol     TEXT,                         -- volume-split children: the parent volume/report symbol this child paragraph was carved from (migration 005); NULL for ordinary extractions. Re-split key: DELETE ... WHERE source_symbol = <volume>.
   PRIMARY KEY (symbol_normalized, lang, position)
 );
 
 CREATE INDEX IF NOT EXISTS idx_document_paragraphs_raw_symbol
   ON digitallibrary.document_paragraphs_raw (symbol_normalized, lang);
+CREATE INDEX IF NOT EXISTS idx_document_paragraphs_raw_source_symbol
+  ON digitallibrary.document_paragraphs_raw (source_symbol) WHERE source_symbol IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- Semantic layer (migration 003). ONE row per parsed element in document order.

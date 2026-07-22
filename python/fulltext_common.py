@@ -132,6 +132,7 @@ _LEDGER_COLUMNS = (
     "status",
     "error",
     "fetched_at",
+    "source_symbol",  # volume-split children: parent volume/report symbol (migration 005)
 )
 
 
