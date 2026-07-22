@@ -686,6 +686,31 @@ late stage; the sha256-gate (`harvest_state` key `volume_splits`) makes it a che
 no-op until DL harvests a new supplement. The HRC track is a one-time local
 backfill (LibreOffice-dependent, historical set), not part of the nightly.
 
+## Coverage snapshot (2026-07-22)
+
+Catalog = 41,802 distinct symbols across the 8 families. Regenerate the audit
+with the bucketed CASE query in this section's git history (or adapt from
+`fulltext_pipeline.py --report`).
+
+| State | Bucket | Count | Path forward |
+|---|---|---:|---|
+| on site | parsed & structured (sem-v4) | 25,734* | — |
+| on site | bracket parts via parent resolution | 2,721 | auto-improves as parents parse |
+| deferred | decisions in pre-2003 scanned volumes | ~5,200 | OCR the volumes, reuse split stage |
+| deferred | scanned resolutions, no text layer | ~4,900 | OCR (see docs/_research/ocr-experiments.md: Surya on rented GPU, ~3h/$1-4) |
+| absent | confirmed nothing on ODS | ~1,500 | ~400 have DL-hosted PDFs (untapped) |
+
+*25,734 = whole corpus incl. volume-split children; 21,906 of the catalog audit
+plus 3,590 split children plus non-catalog volume parents and rescues.
+
+Recovery history: Word era 15.1k (Jul 20) -> +PDF era 7.0k (Jul 21) -> +volume
+split 3.6k + fallback PDFs (Jul 22). The verification lesson that shaped the
+tooling: fidelity gates (token preservation) cannot see structure-flattening or
+display-invisibility; the display-coverage gate, structural invariants, TOC
+verifier, and importance-weighted manual audits of the most-cited docs exist
+because each caught a class the others could not. Keep auditing the head of the
+citation distribution by eye after parser changes.
+
 ## Files
 
 | File | Role |
