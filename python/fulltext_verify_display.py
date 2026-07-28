@@ -39,12 +39,25 @@ near-nothing — their operative content sits in an annexed instrument with
 ``paragraph_type=NULL``.
 
 Output: a ranked report (worst first) to stdout and to
-<archive>/audit/display_coverage.tsv. Read-only. Exit code is 1 if any
-audit-set document is flagged (so it can gate CI on the docs that matter),
-else 0.
+<archive>/audit/display_coverage.tsv. Read-only.
+
+Exit code (2026-07-27 — every one of these was a way the gate reported success
+while seeing nothing):
+
+  * 1 if the audit set cannot be loaded. It used to be optional: with the SSD
+    unmounted `highlight` was empty, `flagged_audit` was therefore always empty,
+    and the gate exited 0 with 45 documents below the bar (D-DEFAULT-NO-SET).
+  * 1 if any ledger document (`document_files.status='parsed'`) has NO rows in
+    `document_paragraphs`. Iterating over what is present can never see what is
+    missing: deleting a flagged document's rows used to remove it from the report
+    entirely and drop the flagged count to 0 (D-DEL-DOCS).
+  * 1 if 0 documents were compared.
+  * 1 if any audit-set document is below --threshold. A document with zero
+    countable tokens now scores 0% visible, not 100% (D-ZERO-TOKENS); there are
+    80 such documents in production, all of which used to read as perfect.
 
 Usage:
-    uv run python python/fulltext_verify_display.py
+    uv run python python/fulltext_verify_display.py --audit-set
     uv run python python/fulltext_verify_display.py --audit-set <path>
     uv run python python/fulltext_verify_display.py --threshold 70
 """
@@ -57,12 +70,9 @@ import os
 import sys
 from pathlib import Path
 
-import psycopg
-from dotenv import dotenv_values
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-WORKTREE_ENV = "/Users/david/UN/digitallibrary.unfck.org/.claude/worktrees/fulltexts/.env"
-MANDATES_ENV = "/Users/david/UN/mandates/.env"
-SSL_CERTS = ["/etc/ssl/cert.pem", "/etc/ssl/certs/ca-certificates.crt"]
+from fulltext_common import get_conn  # noqa: E402
 
 DEFAULT_ARCHIVE_ROOT = "/Volumes/SSDAStorage/digitallibrary-fulltexts"
 ARCHIVE_ROOT = Path(os.getenv("FULLTEXT_ARCHIVE_ROOT", DEFAULT_ARCHIVE_ROOT))
@@ -71,49 +81,33 @@ DEFAULT_AUDIT_SET = AUDIT_DIR / "audit_set.json"
 OUTPUT_TSV = AUDIT_DIR / "display_coverage.tsv"
 
 
-def _with_ssl(url: str) -> str:
-    if "sslrootcert" in url:
-        return url
-    for p in SSL_CERTS:
-        if os.path.exists(p):
-            return url + ("&" if "?" in url else "?") + "sslrootcert=" + p
-    return url
-
-
-def get_conn() -> psycopg.Connection:
-    """Connection that can read digitallibrary (falls back to mandates .env)."""
-    last = None
-    for path in (WORKTREE_ENV, MANDATES_ENV):
-        vals = dotenv_values(path)
-        u = vals.get("DATABASE_URL")
-        if not u:
-            continue
-        u = u.replace(":6432/", ":5432/")
-        try:
-            conn = psycopg.connect(_with_ssl(u))
-            cur = conn.cursor()
-            cur.execute("select 1 from digitallibrary.document_paragraphs limit 1")
-            cur.fetchone()
-            return conn
-        except Exception as e:  # noqa: BLE001
-            last = e
-            try:
-                conn.close()
-            except Exception:
-                pass
-            continue
-    raise RuntimeError(f"No usable DATABASE_URL for digitallibrary: {last}")
-
-
 def load_audit_set(path: str | None) -> tuple[set[str], dict[str, int]] | None:
-    """Return (symbols, citations-by-symbol) or None when no audit set is used."""
+    """Return (symbols, citations-by-symbol) or None when the set is unreadable.
+
+    None is a FAILURE for the caller, never a quiet fallback to "no gating".
+    """
     p = Path(path) if path else DEFAULT_AUDIT_SET
-    if path is None and not p.exists():
+    if not p.exists():
         return None
     data = json.loads(Path(p).read_text())
     syms = {e["symbol"] for e in data}
     cits = {e["symbol"]: e.get("citations", 0) for e in data}
     return syms, cits
+
+
+def ledger_symbols(conn, restrict: set[str] | None) -> set[str]:
+    """The DENOMINATOR: documents the ledger says are parsed. Taken from
+    document_files, NOT from document_paragraphs, so a document that vanished
+    from the semantic layer is a finding rather than an absence."""
+    sql = ("select symbol_normalized from digitallibrary.document_files "
+           "where status = 'parsed'")
+    params: list = []
+    if restrict is not None:
+        sql += " and symbol_normalized = any(%s)"
+        params.append(list(restrict))
+    cur = conn.cursor()
+    cur.execute(sql, params)
+    return {r[0] for r in cur.fetchall()}
 
 
 # Word-token count of an element's text, in SQL. Guards empty/whitespace text.
@@ -160,7 +154,10 @@ def compute(conn, restrict: set[str] | None) -> list[dict]:
                 "symbol": sym,
                 "total": total,
                 "visible": vis,
-                "pct": (100.0 * vis / total) if total else 100.0,
+                # An empty document is 0% visible, not 100%. `... if total else
+                # 100.0` made every zero-token document a perfect score and
+                # therefore unflaggable (control D-ZERO-TOKENS).
+                "pct": (100.0 * vis / total) if total else 0.0,
                 "main_total": mt or 0,
                 "main_visible": mv or 0,
                 "annex_total": at or 0,
@@ -189,15 +186,26 @@ def main() -> int:
     args = ap.parse_args()
 
     # An explicit --audit-set restricts the scan; otherwise scan the whole
-    # corpus but still HIGHLIGHT audit-set docs if audit_set.json exists.
+    # corpus but still HIGHLIGHT audit-set docs. The set is REQUIRED: without it
+    # the gate has no symbol to fail on and reports success unconditionally.
     aset = load_audit_set(args.audit_set)
-    restrict = aset[0] if (args.audit_set is not None and aset) else None
-    highlight = aset[0] if aset else set()
-    cits = aset[1] if aset else {}
+    if aset is None:
+        print(f"FAIL: audit set not readable "
+              f"({args.audit_set or DEFAULT_AUDIT_SET}). This gate's failure "
+              f"signal is 'an audit-set document is below the bar'; without the "
+              f"set it can only ever exit 0, which is not the same as passing.")
+        return 1
+    restrict = aset[0] if args.audit_set is not None else None
+    highlight = aset[0]
+    cits = aset[1]
 
     conn = get_conn()
     rows = compute(conn, restrict)
+    ledger = ledger_symbols(conn, restrict)
     conn.close()
+
+    present = {r["symbol"] for r in rows}
+    absent = sorted(ledger - present)
 
     rows.sort(key=lambda r: (r["pct"], -r["total"]))
     flagged = [r for r in rows if r["pct"] < args.threshold]
@@ -224,8 +232,8 @@ def main() -> int:
     scope = "audit set" if restrict is not None else "full corpus"
     print(f"DISPLAY-COVERAGE GATE  ({scope}: {len(rows)} docs)  ->  {out}")
     print(
-        f"visibility rule: total = all except masthead-frontmatter/divider; "
-        f"visible = type='heading' OR paragraph_type IN ('operative','preambular')"
+        "visibility rule: total = all except masthead-frontmatter/divider; "
+        "visible = type='heading' OR paragraph_type IN ('operative','preambular')"
     )
     print(f"flagged below {args.threshold:.0f}%: {len(flagged)} docs"
           + (f"  ({len(flagged_audit)} in audit set)" if highlight else ""))
@@ -254,8 +262,26 @@ def main() -> int:
             print(f"  {pctstr(r['pct']):>6}%  {flag:>4}  {r['symbol']}  "
                   f"(cit {cits.get(r['symbol'], 0)})")
 
-    # Nonzero exit if any audit-set doc is flagged (gate the docs that matter).
-    return 1 if flagged_audit else 0
+    if absent:
+        print(f"\nMISSING FROM THE SEMANTIC LAYER: {len(absent)} document(s) the ledger "
+              f"marks 'parsed' have no rows in document_paragraphs:")
+        for s in absent[: args.top]:
+            print(f"  {s}")
+        if len(absent) > args.top:
+            print(f"  ... +{len(absent) - args.top} more")
+
+    problems = []
+    if not rows:
+        problems.append("0 documents were compared")
+    if absent:
+        problems.append(f"{len(absent)} ledger document(s) absent from document_paragraphs")
+    if flagged_audit:
+        problems.append(f"{len(flagged_audit)} audit-set document(s) below "
+                        f"{args.threshold:.0f}% visible")
+    if problems:
+        print("\nFAIL: " + "; ".join(problems))
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

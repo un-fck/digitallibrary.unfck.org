@@ -66,7 +66,17 @@ REAL_PARSED = ARCHIVE_ROOT / "parsed_dev"
 # ---------------------------------------------------------------------------
 
 DOCX_SYMS = ["S/RES/2825(2026)", "S/RES/2824(2026)", "S/RES/2823(2026)"]
-PDF_SYMS = ["A/RES/1000(ES-I)", "A/RES/1001(ES-I)", "A/RES/1002(ES-I)"]
+# A BASELINE FIXTURE MUST BE A DOCUMENT THE GATE PASSES. The first version of
+# this suite used A/RES/1000(ES-I), A/RES/1001(ES-I) and A/RES/1002(ES-I), all of
+# which the repaired PDF gate fails on their own merits: the pymupdf path fuses
+# text across columns into words that exist nowhere in the file
+# ('i111ple111enresolution', 'asresolution'), and the crop for A/RES/1005(ES-II)
+# swallows the whole preamble of the NEIGHBOURING resolution printed above it.
+# Grading damage against an already-failing fixture cannot distinguish the damage
+# from the pre-existing defect, so the fixtures below are three documents that
+# pass the repaired gate cleanly (chosen from a full-corpus run, largest regions
+# first, so a deletion control has something to delete).
+PDF_SYMS = ["A/RES/1201(XII)", "A/RES/1707(XVI)", "A/RES/1013(XI)"]
 VOLUME = "A/78/49(VOL.II)"
 STRUCT_SYMS = ["A/RES/79/1", "A/RES/70/1", "A/RES/69/313"]
 
@@ -640,6 +650,7 @@ def controls_pdf() -> None:
     d = parsed_dir("p_base")
     rc, out = run_gate(PDFG, ["--symbols", *PDF_SYMS, "--parsed-dir", str(d), "--verbose"],
                        env_adv())
+    base_out = out
     record(judge(Control("P-BASELINE", "verify_pdf", "none (pristine parse)",
                          "quiet", f"rc={rc}", detail=_grep(out, "aggregate")), rc != 0))
 
@@ -652,6 +663,7 @@ def controls_pdf() -> None:
     save_doc(d, PSYM, doc)
     rc, out = run_gate(PDFG, ["--symbols", PSYM, "--parsed-dir", str(d), "--verbose"],
                        env_adv())
+    del90_out = out
     record(judge(Control("P-DEL90", "verify_pdf", f"kept {max(1, n//10)}/{n} elements",
                          "DETECT", f"rc={rc}",
                          detail=_grep(out, "region=")), rc != 0))
@@ -685,17 +697,33 @@ def controls_pdf() -> None:
                          "3 invented clauses appended to the parse", "DETECT",
                          f"rc={rc}"), rc != 0))
 
-    # TOLERANCE — the --max-loss 5 band, exercised deliberately.
+    # TOLERANCE — the --max-loss band is a claim, so BOTH of its edges are
+    # tested against the same damage. (The audit's original control deleted 5
+    # distinct WORDS, which removed 24 TOKENS and passed only because the pass
+    # rule was an OR. With the rule fixed to AND the band means what it says.)
     d = parsed_dir("p_band")
     doc = load_doc(d, PSYM)
-    _delete_n_content_words(doc, 5)
+    before = _pdf_tokens(doc)
+    _delete_occurrences(doc, before, 3)
     save_doc(d, PSYM, doc)
-    rc, out = run_gate(PDFG, ["--symbols", PSYM, "--parsed-dir", str(d), "--verbose"],
-                       env_adv())
-    record(judge(Control("P-BAND-5TOKENS", "verify_pdf",
-                         "5 distinct in-region content words deleted (== default "
-                         "--max-loss band)", "DETECT", f"rc={rc}",
-                         detail=_grep(out, "genuine_lost")), rc != 0))
+    _pdf_damage(before, doc)
+    # Read the loss the GATE measures (not the loss the probe intended: a deleted
+    # parse token is only an in-region loss if the file prints it in the region).
+    _, probe = run_gate(PDFG, ["--symbols", PSYM, "--parsed-dir", str(d), "--verbose",
+                               "--max-loss", "100000"], env_adv())
+    obs = int(re.search(r"lost=(\d+)", _grep(probe, PSYM) or "lost=0").group(1))
+    rc, out = run_gate(PDFG, ["--symbols", PSYM, "--parsed-dir", str(d), "--verbose",
+                              "--max-loss", str(obs)], env_adv())
+    record(judge(Control("P-BAND-EDGE", "verify_pdf",
+                         f"a deletion the gate measures as {obs} in-region tokens, with "
+                         f"the band set to exactly {obs}", "quiet", f"rc={rc}",
+                         detail=_grep(out, "region=")), rc != 0))
+    rc, out = run_gate(PDFG, ["--symbols", PSYM, "--parsed-dir", str(d), "--verbose",
+                              "--max-loss", str(obs - 1)], env_adv())
+    record(judge(Control("P-BAND-OVER", "verify_pdf",
+                         f"the SAME {obs}-token deletion, one token past the band "
+                         f"({obs - 1})", "DETECT", f"rc={rc}",
+                         detail=_grep(out, "region=")), rc != 0))
 
     # VACUOUS PASS.
     d = parsed_dir("p_empty")
@@ -703,6 +731,75 @@ def controls_pdf() -> None:
                        env_adv())
     record(judge(Control("P-EMPTY-SET", "verify_pdf", "0 documents selected",
                          "DETECT", f"rc={rc}", detail=_grep(out, "aggregate")), rc != 0))
+
+    # THE DENOMINATOR ITSELF. The defect that made this gate detect 0/6 was that
+    # the comparison region was anchored on the parse, so damage shrank the
+    # denominator with the numerator. This control measures the denominator
+    # directly: the region must be IDENTICAL for a pristine and a 90%-deleted
+    # parse. (Before the repair: 1,676 -> 135 tokens, and the score ROSE to
+    # 100.00%.)
+    region_base = _region_of(base_out, PSYM)
+    region_dmg = _region_of(del90_out, PSYM)
+    c = Control("P-REGION-INDEPENDENCE", "verify_pdf",
+                "the comparison region is measured on a pristine and on a "
+                "90%-deleted parse of the same document", "DETECT",
+                f"region {region_base} -> {region_dmg}")
+    c.verdict = "DETECTED" if (region_base and region_base == region_dmg) else "MISSED"
+    c.detail = ("the denominator is a property of the file"
+                if c.verdict == "DETECTED"
+                else "the denominator moved with the artefact being graded")
+    record(c)
+
+    # FABRICATION lifted verbatim from a DIFFERENT resolution (the class that
+    # publishes real UN prose under the wrong symbol).
+    d = parsed_dir("p_fab_x")
+    doc = load_doc(d, PSYM)
+    other = load_doc(d, PDF_SYMS[1])
+    doc["elements"].extend(other["elements"][: max(1, len(other["elements"]) // 2)])
+    save_doc(d, PSYM, doc)
+    rc, out = run_gate(PDFG, ["--symbols", PSYM, "--parsed-dir", str(d), "--verbose"],
+                       env_adv())
+    record(judge(Control("P-FABRICATE-XDOC", "verify_pdf",
+                         f"half of {PDF_SYMS[1]}'s elements spliced into {PSYM}",
+                         "DETECT", f"rc={rc}", detail=_grep(out, "region=")), rc != 0))
+
+
+def _pdf_tokens(doc: dict):
+    import fulltext_verify_pdf as vp
+    return vp.parsed_words(doc)
+
+
+def _pdf_damage(before, doc: dict) -> int:
+    n = sum((before - _pdf_tokens(doc)).values())
+    if n == 0:
+        print("      !! WARNING: this control removed 0 tokens — the probe, not the "
+              "gate, is at fault")
+    return n
+
+
+def _delete_occurrences(doc: dict, before, target: int) -> None:
+    """Delete SINGLE occurrences of content words until `target` tokens are gone.
+
+    Deleting every occurrence of a word removes an unpredictable number of
+    tokens, which is useless for testing the edge of an absolute band.
+    """
+    for e in doc.get("elements", []):
+        t = e.get("text") or ""
+        for w in re.findall(r"[A-Za-z]{6,}", t):
+            e["text"] = re.sub(r"\b" + re.escape(w) + r"\b", "", e["text"], count=1)
+            if sum((before - _pdf_tokens(doc)).values()) >= target:
+                return
+            t = e["text"]
+
+
+def _region_of(out: str, symbol: str) -> str:
+    """The region size the PDF gate reported for `symbol`, from its own output."""
+    for ln in out.splitlines():
+        if symbol in ln:
+            m = re.search(r"region=(\d+)", ln)
+            if m:
+                return m.group(1)
+    return ""
 
 
 def _delete_n_content_words(doc: dict, n: int) -> list[str]:
@@ -759,8 +856,51 @@ def _snapshot_volume() -> dict:
     return {"cols": cols, "rows": rows, "syms": [VOLUME] + kids, "children": kids}
 
 
-def _run_vol() -> tuple[int, str]:
-    return run_gate(VOLG, ["--symbols", VOLUME], env_adv())
+def _rich_child(kids: list[str]) -> tuple[str, str, str]:
+    """(child with the most text, its successor, a non-empty row of the successor)."""
+    c = adv_conn()
+    with c.cursor() as cur:
+        cur.execute("SELECT symbol_normalized, sum(length(text)) FROM "
+                    "digitallibrary.document_paragraphs_raw WHERE source_symbol = %s "
+                    "GROUP BY 1 ORDER BY 2 DESC", [VOLUME])
+        by_size = cur.fetchall()
+        rich = by_size[0][0]
+        i = kids.index(rich)
+        nxt = kids[i + 1] if i + 1 < len(kids) else kids[i - 1]
+        cur.execute("SELECT text FROM digitallibrary.document_paragraphs_raw "
+                    "WHERE source_symbol=%s AND symbol_normalized=%s AND length(btrim(text)) > 40 "
+                    "ORDER BY position OFFSET 1 LIMIT 1", [VOLUME, nxt])
+        row = cur.fetchone()
+        if row is None:
+            cur.execute("SELECT text FROM digitallibrary.document_paragraphs_raw "
+                        "WHERE source_symbol=%s AND symbol_normalized=%s "
+                        "AND length(btrim(text)) > 40 ORDER BY position LIMIT 1", [VOLUME, nxt])
+            row = cur.fetchone()
+    c.close()
+    return rich, nxt, (row[0] if row else "")
+
+
+def _run_vol(extra: list[str] | None = None) -> tuple[int, str]:
+    return run_gate(VOLG, ["--symbols", VOLUME, *(extra or [])], env_adv())
+
+
+def _vol_signal(out: str):
+    """The volume gate's own reported numbers for the fixture volume.
+
+    The fixture volume is RED at baseline for a real reason (4 printed decision
+    headings the split never routed into a child — 'unmatched', which the gate
+    now fails on and used to print and ignore). Where a gate is legitimately red
+    on undamaged input its exit code carries no information, so every control on
+    it is judged on MOVEMENT of these numbers, exactly as the TOC controls are.
+    """
+    m = re.search(r"coverage=([\d.]+) children=(\d+)/(\d+) gt_tokens=(\d+) "
+                  r"missing=(\d+) unmatched=(\d+) invented=(\d+) problems=(\d+)", out)
+    nums = tuple(m.groups()) if m else ()
+    # The problem LINES too, not only their count: a control that changes what a
+    # problem says without changing how many there are (a child truncated inside
+    # an already-reported category) must still move the signal.
+    lines = tuple(sorted(ln.strip() for ln in out.splitlines() if ln.startswith("       - ")))
+    return (nums, lines) if nums else None
 
 
 def controls_volumes() -> None:
@@ -772,10 +912,21 @@ def controls_volumes() -> None:
         print("  (no volume children seeded — skipping)")
         return
     _PARA_SNAP = _snap_paragraphs(kids)
+    # A control that damages nothing proves nothing. The fixture volume's first
+    # child is a two-row decision whose second row is EMPTY, so "delete the
+    # second half" and "append the next child's second row" both moved zero
+    # tokens and blamed the gate for the probe's failure. Pick the child with the
+    # most text, and its successor's first NON-EMPTY body row.
+    kid_rich, kid_next, leak_row = _rich_child(kids)
+    print(f"    (damage targets: {kid_rich}, leaking from {kid_next})")
 
     rc, out = _run_vol()
+    base_rc, base_sig = rc, _vol_signal(out)
     record(judge(Control("V-BASELINE", "verify_volumes", "none (pristine split)",
                          "quiet", f"rc={rc}", detail=_grep(out, VOLUME)), rc != 0))
+
+    def vjudge(c: Control, rc: int, out: str) -> Control:
+        return judge_signal(c, rc, _vol_signal(out), base_rc, base_sig)
 
     def damage(sql: str, params: list) -> tuple[int, str]:
         c = adv_conn()
@@ -789,20 +940,20 @@ def controls_volumes() -> None:
     # DELETION — every child of the volume removed from the DB.
     rc, out = damage("DELETE FROM digitallibrary.document_paragraphs_raw "
                      "WHERE source_symbol = %s", [VOLUME])
-    record(judge(Control("V-DEL-CHILDREN", "verify_volumes",
-                         f"all {len(kids)} children deleted from the raw layer",
-                         "DETECT", f"rc={rc}", detail=_grep(out, VOLUME)), rc != 0))
+    record(vjudge(Control("V-DEL-CHILDREN", "verify_volumes",
+                          f"all {len(kids)} children deleted from the raw layer",
+                          "DETECT", f"rc={rc}", detail=_grep(out, VOLUME)), rc, out))
 
     # DELETION — one child removed.
     rc, out = damage("DELETE FROM digitallibrary.document_paragraphs_raw "
                      "WHERE source_symbol = %s AND symbol_normalized = %s",
                      [VOLUME, kids[len(kids) // 2]])
-    record(judge(Control("V-DEL-ONE-CHILD", "verify_volumes",
-                         f"child {kids[len(kids)//2]} deleted entirely", "DETECT",
-                         f"rc={rc}", detail=_grep(out, VOLUME)), rc != 0))
+    record(vjudge(Control("V-DEL-ONE-CHILD", "verify_volumes",
+                          f"child {kids[len(kids)//2]} deleted entirely", "DETECT",
+                          f"rc={rc}", detail=_grep(out, VOLUME)), rc, out))
 
-    # DELETION — one child removed from BOTH layers (so the "stored under the
-    # sibling volume" exception cannot excuse it).
+    # DELETION — one child removed from BOTH layers (so a "stored under the
+    # sibling volume" rule cannot excuse it).
     victim = kids[len(kids) // 2]
     c = adv_conn()
     with c.cursor() as cur:
@@ -814,9 +965,9 @@ def controls_volumes() -> None:
     rc, out = _run_vol()
     _restore_volume(snap)
     _restore_paragraphs(_PARA_SNAP)
-    record(judge(Control("V-DEL-CHILD-BOTH", "verify_volumes",
-                         f"child {victim} deleted from raw AND semantic layers",
-                         "DETECT", f"rc={rc}", detail=_grep(out, VOLUME)), rc != 0))
+    record(vjudge(Control("V-DEL-CHILD-BOTH", "verify_volumes",
+                          f"child {victim} deleted from raw AND semantic layers",
+                          "DETECT", f"rc={rc}", detail=_grep(out, VOLUME)), rc, out))
 
     # MISATTRIBUTION — every child's text moved under its neighbour's symbol.
     c = adv_conn()
@@ -833,9 +984,9 @@ def controls_volumes() -> None:
     c.close()
     rc, out = _run_vol()
     _restore_volume(snap)
-    record(judge(Control("V-MISATTRIB", "verify_volumes",
-                         "every child's rows moved under the NEXT decision's symbol",
-                         "DETECT", f"rc={rc}", detail=_grep(out, VOLUME)), rc != 0))
+    record(vjudge(Control("V-MISATTRIB", "verify_volumes",
+                          "every child's rows moved under the NEXT decision's symbol",
+                          "DETECT", f"rc={rc}", detail=_grep(out, VOLUME)), rc, out))
 
     # TRUNCATION — a child cut short.
     rc, out = damage(
@@ -844,81 +995,132 @@ def controls_volumes() -> None:
         "  SELECT min(position) + (max(position)-min(position))/2 "
         "  FROM digitallibrary.document_paragraphs_raw "
         "  WHERE source_symbol = %s AND symbol_normalized = %s)",
-        [VOLUME, kids[0], VOLUME, kids[0]])
-    record(judge(Control("V-TRUNCATE-CHILD", "verify_volumes",
-                         f"second half of child {kids[0]} deleted", "DETECT",
-                         f"rc={rc}", detail=_grep(out, VOLUME)), rc != 0))
+        [VOLUME, kid_rich, VOLUME, kid_rich])
+    record(vjudge(Control("V-TRUNCATE-CHILD", "verify_volumes",
+                          f"second half of child {kid_rich} deleted", "DETECT",
+                          f"rc={rc}", detail=_grep(out, VOLUME)), rc, out))
 
     # BOUNDARY LEAK — one sentence of the next decision appended to its predecessor.
     c = adv_conn()
     with c.cursor() as cur:
         cur.execute("SELECT text FROM digitallibrary.document_paragraphs_raw "
                     "WHERE source_symbol=%s AND symbol_normalized=%s ORDER BY position LIMIT 1",
-                    [VOLUME, kids[1]])
+                    [VOLUME, kid_next])
         nxt_head = cur.fetchone()[0]
         cur.execute("SELECT max(position) FROM digitallibrary.document_paragraphs_raw "
-                    "WHERE source_symbol=%s AND symbol_normalized=%s", [VOLUME, kids[0]])
+                    "WHERE source_symbol=%s AND symbol_normalized=%s", [VOLUME, kid_rich])
         pos = cur.fetchone()[0]
         cur.execute(
             "INSERT INTO digitallibrary.document_paragraphs_raw "
             "(symbol_normalized, lang, position, kind, text, extractor_version, source_symbol) "
             "VALUES (%s,'en',%s,'paragraph',%s,'adv',%s)",
-            [kids[0], pos + 1,
-             "The Assembly further decided to defer consideration of the item to its "
-             "resumed session.", VOLUME])
+            [kid_rich, pos + 1, leak_row, VOLUME])
     c.close()
     rc, out = _run_vol()
     _restore_volume(snap)
-    record(judge(Control("V-LEAK-1SENTENCE", "verify_volumes",
-                         f"one extra sentence appended to child {kids[0]} "
-                         "(a one-sentence boundary leak)", "DETECT", f"rc={rc}",
-                         detail=_grep(out, VOLUME)), rc != 0))
+    record(vjudge(Control("V-LEAK-1SENTENCE", "verify_volumes",
+                          f"one REAL sentence of the next decision appended to child "
+                          f"{kid_rich} (a one-sentence boundary leak the old substring "
+                          f"test could not see even in principle)", "DETECT", f"rc={rc}",
+                          detail=_grep(out, VOLUME)), rc, out))
 
     # BOUNDARY LEAK — the whole next heading swallowed (the case the gate claims).
     c = adv_conn()
     with c.cursor() as cur:
         cur.execute("SELECT max(position) FROM digitallibrary.document_paragraphs_raw "
-                    "WHERE source_symbol=%s AND symbol_normalized=%s", [VOLUME, kids[0]])
+                    "WHERE source_symbol=%s AND symbol_normalized=%s", [VOLUME, kid_rich])
         pos = cur.fetchone()[0]
         cur.execute(
             "INSERT INTO digitallibrary.document_paragraphs_raw "
             "(symbol_normalized, lang, position, kind, text, extractor_version, source_symbol) "
             "VALUES (%s,'en',%s,'paragraph',%s,'adv',%s)",
-            [kids[0], pos + 1, nxt_head, VOLUME])
+            [kid_rich, pos + 1, nxt_head, VOLUME])
     c.close()
     rc, out = _run_vol()
     _restore_volume(snap)
-    record(judge(Control("V-LEAK-NEXT-HEADING", "verify_volumes",
-                         f"the next decision's heading line appended to child {kids[0]}",
-                         "DETECT", f"rc={rc}", detail=_grep(out, VOLUME)), rc != 0))
+    record(vjudge(Control("V-LEAK-NEXT-HEADING", "verify_volumes",
+                          f"the next decision's heading line appended to child {kid_rich}",
+                          "DETECT", f"rc={rc}", detail=_grep(out, VOLUME)), rc, out))
 
     # FABRICATION — invented text inserted into a child.
     c = adv_conn()
     with c.cursor() as cur:
         cur.execute("SELECT max(position) FROM digitallibrary.document_paragraphs_raw "
-                    "WHERE source_symbol=%s AND symbol_normalized=%s", [VOLUME, kids[2]])
+                    "WHERE source_symbol=%s AND symbol_normalized=%s", [VOLUME, kid_rich])
         pos = cur.fetchone()[0]
         for i, t in enumerate(INVENTED):
             cur.execute(
                 "INSERT INTO digitallibrary.document_paragraphs_raw "
                 "(symbol_normalized, lang, position, kind, text, extractor_version, source_symbol) "
                 "VALUES (%s,'en',%s,'paragraph',%s,'adv',%s)",
-                [kids[2], pos + 1 + i, t, VOLUME])
+                [kid_rich, pos + 1 + i, t, VOLUME])
     c.close()
     rc, out = _run_vol()
     _restore_volume(snap)
-    record(judge(Control("V-FABRICATE", "verify_volumes",
-                         f"3 invented paragraphs inserted into child {kids[2]}",
-                         "DETECT", f"rc={rc}", detail=_grep(out, VOLUME)), rc != 0))
+    record(vjudge(Control("V-FABRICATE", "verify_volumes",
+                          f"3 invented paragraphs inserted into child {kid_rich}",
+                          "DETECT", f"rc={rc}", detail=_grep(out, VOLUME)), rc, out))
 
-    # DELETION — 90% of the VOLUME's own extraction (the coverage denominator's
-    # numerator side).
+    # DELETION — 90% of the VOLUME's own extraction.
     rc, out = damage(
         "DELETE FROM digitallibrary.document_paragraphs_raw WHERE symbol_normalized = %s "
         "AND source_symbol IS NULL AND position %% 10 <> 0", [VOLUME])
-    record(judge(Control("V-DEL-90-RAW", "verify_volumes",
-                         "90% of the volume's own raw rows deleted", "DETECT",
-                         f"rc={rc}", detail=_grep(out, VOLUME)), rc != 0))
+    record(vjudge(Control("V-DEL-90-RAW", "verify_volumes",
+                          "90% of the volume's own raw rows deleted", "DETECT",
+                          f"rc={rc}", detail=_grep(out, VOLUME)), rc, out))
+
+    # ---- CHILD FIDELITY (--children): the 3,590 volume-split children have no
+    # archive file of their own, so both text gates skip them. Their ground truth
+    # is the parent volume's PRINTED RANGE.
+    rc, out = _run_vol(["--children"])
+    _ = rc
+    cbase = _grep(out, "Child fidelity")
+    record(judge(Control("V-CHILD-BASELINE", "verify_volumes --children",
+                         "none (children as stored)", "quiet",
+                         f"rc={rc}", detail=cbase),
+                 "Child fidelity" not in out))
+
+    def cjudge(name: str, dmg: str, out: str) -> Control:
+        c = Control(name, "verify_volumes --children", dmg, "DETECT",
+                    _grep(out, "Child fidelity"))
+        c.verdict = "DETECTED" if _grep(out, "Child fidelity") != cbase else "MISSED"
+        return c
+
+    # A child whose stored content is gone entirely.
+    victim = kids[3]
+    c = adv_conn()
+    with c.cursor() as cur:
+        cur.execute("DELETE FROM digitallibrary.document_paragraphs "
+                    "WHERE symbol_normalized = %s", [victim])
+        cur.execute("UPDATE digitallibrary.document_paragraphs_raw SET text = '' "
+                    "WHERE symbol_normalized = %s AND source_symbol = %s", [victim, VOLUME])
+    c.close()
+    rc, out = _run_vol(["--children"])
+    _restore_volume(snap)
+    _restore_paragraphs(_PARA_SNAP)
+    record(cjudge("V-CHILD-EMPTIED", f"child {victim} emptied in both layers", out))
+
+    # EVERY child truncated to the first half of its stored rows. (Targeting a
+    # single child proved nothing when that child happened to be one of the two
+    # already below the bar — a control must be shown to move the number.)
+    c = adv_conn()
+    with c.cursor() as cur:
+        cur.execute("DELETE FROM digitallibrary.document_paragraphs "
+                    "WHERE symbol_normalized = ANY(%s)", [kids])
+        cur.execute(
+            "DELETE FROM digitallibrary.document_paragraphs_raw d WHERE d.source_symbol = %s "
+            "AND d.position > ("
+            "  SELECT min(position) + (max(position)-min(position))/2 "
+            "  FROM digitallibrary.document_paragraphs_raw x "
+            "  WHERE x.source_symbol = d.source_symbol "
+            "    AND x.symbol_normalized = d.symbol_normalized)",
+            [VOLUME])
+    c.close()
+    rc, out = _run_vol(["--children"])
+    _restore_volume(snap)
+    _restore_paragraphs(_PARA_SNAP)
+    record(cjudge("V-CHILD-TRUNCATED",
+                  f"all {len(kids)} children cut to half their stored rows", out))
 
     # VACUOUS PASS.
     rc, out = run_gate(VOLG, ["--symbols", "Z/NO/SUCH(VOL.II)"], env_adv())
@@ -1289,7 +1491,7 @@ def controls_nightly() -> None:
 # Report
 # ===========================================================================
 
-def report() -> int:
+def report(require: int = 0) -> int:
     print("\n" + "=" * 78)
     dets = [c for c in RESULTS if c.expected == "DETECT" and not c.skipped]
     detected = [c for c in dets if c.verdict == "DETECTED"]
@@ -1308,6 +1510,13 @@ def report() -> int:
         for c in noisy:
             print(f"  {c.name:<22} [{c.gate}]")
 
+    if require and len(RESULTS) < require:
+        print(f"\nFAIL: only {len(RESULTS)} control(s) ran, --require {require}. "
+              f"A suite that checked nothing must never be indistinguishable from a "
+              f"suite that checked everything.")
+        RESULTS.append(Control("SUITE-COVERAGE", "suite",
+                               f"only {len(RESULTS)} of >= {require} controls ran",
+                               "DETECT", "under-run", "MISSED"))
     md = SCRATCH / "negative-controls.md"
     with md.open("w") as fh:
         fh.write("| control | gate | damage applied | expected | observed | verdict |\n")
@@ -1316,6 +1525,8 @@ def report() -> int:
             fh.write(f"| `{c.name}` | {c.gate} | {c.damage} | {c.expected} | "
                      f"{c.observed} | **{c.verdict}** |\n")
     print(f"\ntable -> {md}")
+    if require and len(RESULTS) < require:
+        return 1
     return 1 if (missed or noisy) else 0
 
 
@@ -1323,6 +1534,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--seed", action="store_true", help="(re)build the scratch DB")
     ap.add_argument("--only", default="", help="run only controls whose name starts with this")
+    ap.add_argument("--require", type=int, default=0,
+                    help="fail unless at least this many controls actually ran. A suite "
+                         "that silently checked nothing (archive unmounted, a group that "
+                         "crashed) must not exit 0.")
     args = ap.parse_args()
 
     SCRATCH.mkdir(parents=True, exist_ok=True)
@@ -1337,8 +1552,15 @@ def main() -> int:
     for prefix, fn in groups:
         if args.only and not prefix.startswith(args.only[:2]):
             continue
-        fn()
-    return report()
+        try:
+            fn()
+        except Exception as exc:                     # a crashed group prints nothing
+            print(f"  !! control group {prefix} CRASHED: {type(exc).__name__}: {exc}")
+            c = Control(f"{prefix}GROUP", prefix, "the control group itself", "DETECT",
+                        f"crashed: {type(exc).__name__}")
+            c.verdict = "MISSED"
+            RESULTS.append(c)
+    return report(args.require)
 
 
 if __name__ == "__main__":

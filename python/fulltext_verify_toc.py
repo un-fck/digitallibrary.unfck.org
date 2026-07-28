@@ -114,6 +114,12 @@ QHYPERLINK = W + "hyperlink"
 AUDIT_DIR = ARCHIVE_ROOT / "audit"
 DEFAULT_AUDIT_SET = AUDIT_DIR / "audit_set.json"
 TSV_OUT = AUDIT_DIR / "toc_check.tsv"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+# Checked-in, triaged findings. Before 2026-07-27 this gate exited 1 on pristine
+# correct input (6 misclassified + 2 split on A/RES/79/1 — findings its own
+# docstring calls expected), so its exit code carried no information and nobody
+# could gate on it. It is now green on the corpus as triaged and red on MOVEMENT.
+BASELINE = REPO_ROOT / "docs" / "_baselines" / "toc-baseline.tsv"
 
 # Validation / calibration anchors (always checked when no audit set / symbols given).
 KNOWN_SYMBOLS = [
@@ -235,6 +241,66 @@ class Declared:
     text: str
     source: str
     level: int | None = None
+
+
+_SRC_TOKEN = re.compile(r"[a-z0-9]+")
+
+
+def _src_tokens(text: str) -> list[str]:
+    return _SRC_TOKEN.findall((text or "").lower())
+
+
+def docx_source_text(path: Path) -> str:
+    """Every paragraph of the docx, concatenated.
+
+    Ground truth for the REVERSE direction: a parsed heading whose word sequence
+    occurs nowhere in the source document was invented by the parser. Inserting
+    three fabricated headings into the parse used to leave every one of this
+    gate's finding counts identical (control C-FABRICATE).
+    """
+    try:
+        with zipfile.ZipFile(path) as z:
+            root = ET.fromstring(z.read("word/document.xml"))
+    except Exception:
+        return ""
+    body = root.find(W + "body")
+    if body is None:
+        return ""
+    return " ".join(_ptext(p) for p in body.iter(QP))
+
+
+def pdf_source_text(path: Path) -> str:
+    if fitz is None:
+        return ""
+    try:
+        doc = fitz.open(path)
+    except Exception:
+        return ""
+    try:
+        return " ".join(doc[i].get_text("text") for i in range(doc.page_count))
+    finally:
+        doc.close()
+
+
+def source_signature(text: str) -> str:
+    """Letters and digits only, whitespace and punctuation removed.
+
+    Word/OOXML splits a line into runs at arbitrary points ('Reinvigorat'+'ing')
+    and fuses others ('II'+'Reinvigorating' in one paragraph), so neither a
+    character substring of the rendered text nor a word-sequence match is
+    reliable. Collapsing both sides to their letters makes the comparison immune
+    to every one of those, while a sentence that was never in the document still
+    cannot be found. Measured on the 100-document audit set: 8 false positives
+    with a raw substring test, 13 with word-sequence matching, 0 with this.
+    """
+    return "".join(_SRC_TOKEN.findall((text or "").lower()))
+
+
+def occurs_in_source(heading: str, src_signature: str) -> bool:
+    sig = source_signature(heading)
+    if len(sig) < 20:
+        return True                      # too little evidence either way
+    return sig in src_signature
 
 
 def _extract_docx(path: Path) -> tuple[list[Declared], set[str]]:
@@ -401,6 +467,7 @@ class ParsedElem:
     text: str
     nfull: str = ""
     nstrip: str = ""
+    text_only: str = ""      # without the parser's prefix, for source lookup
 
 
 HEADING_TYPES = {"heading", "title"}
@@ -409,15 +476,17 @@ HEADING_TYPES = {"heading", "title"}
 def _fetch_parsed(conn, symbol: str) -> list[ParsedElem]:
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT type, COALESCE(prefix,'')||COALESCE(text,'') AS text "
+            "SELECT type, COALESCE(prefix,'')||COALESCE(text,'') AS text, "
+            "       COALESCE(text,'') AS text_only "
             "FROM digitallibrary.document_paragraphs "
             "WHERE symbol_normalized = %s ORDER BY position",
             [symbol],
         )
         rows = cur.fetchall()
     elems = []
-    for typ, text in rows:
-        elems.append(ParsedElem(typ, text or "", norm(text), norm_stripped(text)))
+    for typ, text, text_only in rows:
+        elems.append(ParsedElem(typ, text or "", norm(text), norm_stripped(text),
+                                text_only or ""))
     return elems
 
 
@@ -491,6 +560,7 @@ class DocResult:
     declared: int = 0
     matched: int = 0
     findings: list[tuple[str, Declared]] = field(default_factory=list)  # (verdict, declared)
+    invented: list[str] = field(default_factory=list)   # parsed headings not in the source
     error: str | None = None
 
 
@@ -521,10 +591,24 @@ def process(conn, symbol: str, fmt: str, rel: str | None) -> DocResult:
 
     res.sources = sources
     res.declared = len(declared)
+
+    elems = _fetch_parsed(conn, symbol)
+
+    # REVERSE DIRECTION: a parsed heading/title whose text occurs nowhere in the
+    # source document. Runs even for documents that declare no structure — the
+    # declared-heading comparison is blind to structure the parser INVENTED.
+    src = docx_source_text(path) if path.suffix.lower() == ".docx" else pdf_source_text(path)
+    if src:
+        sig = source_signature(src)
+        for e in elems:
+            if e.type not in HEADING_TYPES:
+                continue
+            if not occurs_in_source(e.text_only, sig):
+                res.invented.append(e.text_only[:80])
+
     if not declared:
         return res
 
-    elems = _fetch_parsed(conn, symbol)
     for d in declared:
         verdict = _classify(d, elems)
         if verdict == "MATCHED":
@@ -597,6 +681,15 @@ def main() -> int:
     ap.add_argument("--limit", type=int, help="cap number of documents checked")
     ap.add_argument("--verbose", action="store_true", help="print a line for every doc, incl. clean ones")
     ap.add_argument("--tsv", default=str(TSV_OUT), help=f"TSV output path (default {TSV_OUT})")
+    ap.add_argument("--baseline", default=str(BASELINE),
+                    help="checked-in triaged findings; the gate fails on MOVEMENT")
+    ap.add_argument("--update-baseline", action="store_true")
+    ap.add_argument("--max-undeclared", type=int, default=0,
+                    help="documents whose source declares NO structure at all are "
+                         "UNVERIFIABLE by this gate; more than this many fails it "
+                         "(default 0 — the corpus-wide figure is ~99%%, so a "
+                         "corpus-wide run is red until a structure source exists "
+                         "for those documents)")
     args = ap.parse_args()
 
     conn = get_conn()
@@ -614,7 +707,50 @@ def main() -> int:
         conn.close()
 
     _write_tsv(Path(args.tsv), results)
-    return _summary(results, Path(args.tsv))
+    _summary(results, Path(args.tsv))
+
+    # ---------------- verdict ------------------------------------------------
+    keys = _finding_keys(results)
+    base_path = Path(args.baseline)
+    if args.update_baseline:
+        _write_baseline(base_path, keys)
+        print(f"baseline rewritten: {base_path} ({len(keys)} triaged findings)")
+        return 0
+
+    known = _load_baseline(base_path)
+    new = sorted(keys - known)
+    checked = [r for r in results if r.error is None]
+    undeclared = [r for r in checked if r.declared == 0]
+    invented = [(r.symbol, t) for r in results for t in r.invented]
+    errs = [r for r in results if r.error]
+
+    print(f"\nbaseline                    : {len(known)} triaged finding(s) from {base_path}")
+    print(f"NEW findings (untriaged)    : {len(new)}")
+    print(f"unverifiable (no self-declared structure anywhere in the source): "
+          f"{len(undeclared)}/{len(checked)}")
+    print(f"parsed headings absent from the source document: {len(invented)}")
+    for sym, t in invented[:12]:
+        print(f"    INVENTED  {sym:<22} {t!r}")
+    for sym, verdict, head in new[:12]:
+        print(f"    NEW       {sym:<22} {verdict:<24} {head[:60]!r}")
+
+    problems: list[str] = []
+    if not results:
+        problems.append("0 documents were checked")
+    if errs:
+        problems.append(f"{len(errs)} document(s) could not be read")
+    if new:
+        problems.append(f"{len(new)} untriaged structural finding(s)")
+    if invented:
+        problems.append(f"{len(invented)} parsed heading(s) occur nowhere in the source")
+    if len(undeclared) > args.max_undeclared:
+        problems.append(f"{len(undeclared)} document(s) declare no structure, so this "
+                        f"gate cannot observe them (bar {args.max_undeclared})")
+    if problems:
+        print("\nFAIL: " + "; ".join(problems))
+        return 1
+    print("\nPASS")
+    return 0
 
 
 def _print_doc(res: DocResult, verbose: bool) -> None:
@@ -657,6 +793,34 @@ def _write_tsv(path: Path, results: list[DocResult]) -> None:
     print(f"\nTSV written: {path}")
 
 
+def _finding_keys(results: list[DocResult]) -> set[tuple[str, str, str]]:
+    """(symbol, verdict, normalised declared heading) — the triage key."""
+    out: set[tuple[str, str, str]] = set()
+    for r in results:
+        for verdict, d in r.findings:
+            out.add((r.symbol, verdict, norm_stripped(d.text)[:120]))
+    return out
+
+
+def _load_baseline(path: Path) -> set[tuple[str, str, str]]:
+    if not path.exists():
+        return set()
+    out = set()
+    for ln in path.read_text().splitlines()[1:]:
+        parts = ln.split("\t")
+        if len(parts) >= 3:
+            out.add((parts[0], parts[1], parts[2]))
+    return out
+
+
+def _write_baseline(path: Path, keys: set[tuple[str, str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as fh:
+        fh.write("symbol\tverdict\theading\n")
+        for k in sorted(keys):
+            fh.write("\t".join(k) + "\n")
+
+
 def _summary(results: list[DocResult], tsv: Path) -> int:
     checked = [r for r in results if r.error is None]
     with_struct = [r for r in checked if r.declared > 0]
@@ -691,8 +855,7 @@ def _summary(results: list[DocResult], tsv: Path) -> int:
         for r in sorted(with_miss, key=lambda r: -len(r.findings))[:12]:
             print(f"    {r.symbol:<24} {len(r.findings):>3} misses  (declared {r.declared})")
     print(f"\nTSV: {tsv}")
-    # Non-zero exit iff any error-severity finding exists (structure loss present).
-    return 1 if (tot_missing or tot_mis or errs) else 0
+    return 0
 
 
 if __name__ == "__main__":

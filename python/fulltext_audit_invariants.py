@@ -69,15 +69,23 @@ from pathlib import Path
 import psycopg
 from dotenv import dotenv_values
 
-WORKTREE_ENV = "/Users/david/UN/digitallibrary.unfck.org/.claude/worktrees/fulltexts/.env"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from fulltext_common import get_conn as _base_conn  # noqa: E402
+
 MANDATES_ENV = "/Users/david/UN/mandates/.env"
 SSL_CERTS = ["/etc/ssl/cert.pem", "/etc/ssl/certs/ca-certificates.crt"]
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ARCHIVE_ROOT = "/Volumes/SSDAStorage/digitallibrary-fulltexts"
 ARCHIVE_ROOT = Path(os.getenv("FULLTEXT_ARCHIVE_ROOT", DEFAULT_ARCHIVE_ROOT))
 AUDIT_DIR = ARCHIVE_ROOT / "audit"
 DEFAULT_AUDIT_SET = AUDIT_DIR / "audit_set.json"
 OUTPUT_TSV = AUDIT_DIR / "invariants.tsv"
+# Checked into the repo, so the gate is GREEN on the corpus as triaged and RED
+# the moment a NEW finding appears. A gate that is red on correct input teaches
+# people to ignore it; a gate with no failure signal at all is a comment.
+BASELINE = REPO_ROOT / "docs" / "_baselines" / "invariants-baseline.tsv"
 
 # ---------------------------------------------------------------------------
 # Connection (reads both digitallibrary and mandates schemas; check (d) needs
@@ -95,33 +103,36 @@ def _with_ssl(url: str) -> str:
 
 
 def get_conn() -> tuple[psycopg.Connection, bool]:
-    """Return (conn, has_legacy). has_legacy is False if mandates is unreadable."""
-    for path in (MANDATES_ENV, WORKTREE_ENV):  # mandates first: it can read both
-        vals = dotenv_values(path)
-        u = vals.get("DATABASE_URL")
-        if not u:
-            continue
-        u = u.replace(":6432/", ":5432/")
+    """Return (conn, has_legacy). has_legacy is False if mandates is unreadable.
+
+    Tries the mandates .env first (it can read BOTH schemas), then falls back to
+    the repo's own DATABASE_URL via fulltext_common. The previous version
+    hardcoded a worktree path under the repository's OLD name, which stopped
+    existing when the repo was renamed — a guard that had already silently
+    stopped taking the path it documented.
+    """
+    vals = dotenv_values(MANDATES_ENV)
+    u = vals.get("DATABASE_URL")
+    conn = None
+    if u:
         try:
-            conn = psycopg.connect(_with_ssl(u))
-            cur = conn.cursor()
-            cur.execute("select 1 from digitallibrary.document_paragraphs limit 1")
-            cur.fetchone()
-            has_legacy = True
-            try:
-                cur.execute("select 1 from mandates.paragraphs limit 1")
-                cur.fetchone()
-            except Exception:
-                conn.rollback()
-                has_legacy = False
-            return conn, has_legacy
+            conn = psycopg.connect(_with_ssl(u.replace(":6432/", ":5432/")))
         except Exception:
-            try:
-                conn.close()
-            except Exception:
-                pass
-            continue
-    raise RuntimeError("No usable DATABASE_URL for digitallibrary")
+            conn = None
+    if conn is None:
+        conn = _base_conn()
+        conn.autocommit = True
+    cur = conn.cursor()
+    cur.execute("select 1 from digitallibrary.document_paragraphs limit 1")
+    cur.fetchone()
+    has_legacy = True
+    try:
+        cur.execute("select 1 from mandates.paragraphs limit 1")
+        cur.fetchone()
+    except Exception:
+        conn.rollback()
+        has_legacy = False
+    return conn, has_legacy
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +399,12 @@ def main() -> int:
     ap.add_argument("--all", action="store_true", help="scan the whole corpus")
     ap.add_argument("--output", default=str(OUTPUT_TSV))
     ap.add_argument("--top", type=int, default=20)
+    ap.add_argument("--baseline", default=str(BASELINE),
+                    help="checked-in triaged findings; the gate fails on findings NOT "
+                         "listed here (default %(default)s)")
+    ap.add_argument("--update-baseline", action="store_true",
+                    help="rewrite the baseline from this run and exit 0 — never run "
+                         "this to make a failing gate pass without reading the diff")
     args = ap.parse_args()
 
     aset = load_audit_set(args.audit_set if args.audit_set else str(DEFAULT_AUDIT_SET))
@@ -463,6 +480,53 @@ def main() -> int:
             f"{len(chks):>4}  {cits.get(sym, '') or '':>4}  "
             f"{','.join(sorted(chks)):<40}  {sym}"
         )
+
+    # ---------------- verdict ----------------------------------------------
+    # Until 2026-07-27 main() ended `return 0`, unconditionally: nulling every
+    # semantic label moved the finding count 4 -> 6 and the exit code 0 -> 0,
+    # and deleting the documents printed "0 docs scanned" and exited 0. Writing
+    # FAIL into a TSV and exiting 0 is a comment, not a check.
+    keys = {(sym, chk) for sym, chk, _s, _d in findings}
+    base_path = Path(args.baseline)
+    if args.update_baseline:
+        base_path.parent.mkdir(parents=True, exist_ok=True)
+        with base_path.open("w") as fh:
+            fh.write("symbol\tcheck\n")
+            for sym, chk in sorted(keys):
+                fh.write(f"{sym}\t{chk}\n")
+        print(f"\nbaseline rewritten: {base_path} ({len(keys)} triaged findings)")
+        return 0
+
+    known: set[tuple[str, str]] = set()
+    if base_path.exists():
+        for ln in base_path.read_text().splitlines()[1:]:
+            if "\t" in ln:
+                a, b = ln.split("\t")[:2]
+                known.add((a, b))
+    new = sorted(keys - known)
+
+    problems: list[str] = []
+    if ndocs == 0:
+        problems.append("0 documents were scanned")
+    if not has_legacy:
+        problems.append("mandates.paragraphs unreadable — check (d), the only "
+                        "cross-corpus structure check, did not run")
+    if not base_path.exists():
+        problems.append(f"no baseline at {base_path}: every finding is untriaged")
+    if new:
+        problems.append(f"{len(new)} finding(s) not in the baseline")
+
+    print(f"\nbaseline: {len(known)} triaged finding(s) accepted from {base_path}")
+    if new:
+        print("NEW findings (not triaged):")
+        for sym, chk in new[:30]:
+            print(f"  {sym:<24} {chk}")
+        if len(new) > 30:
+            print(f"  ... +{len(new) - 30} more")
+    if problems:
+        print("\nFAIL: " + "; ".join(problems))
+        return 1
+    print("\nPASS: no untriaged structural findings.")
     return 0
 
 
