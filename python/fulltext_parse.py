@@ -78,6 +78,19 @@ from fulltext_common import ARCHIVE_ROOT, get_conn, sanitize_symbol, upsert_docu
 # every annexed element inherits its delimiter's annex_index. paragraph_type is
 # untouched; text/positions/accounting are preserved (markers move to `prefix`,
 # which the text-preservation gate counts).
+# sem-v5 (MARKER SEQUENCE CONFIRMATION + SOURCE CONSERVATION): (1) a leading 'N.'
+# is only read as an operative marker when it CONTINUES THE DOCUMENT'S OWN sequence
+# (see detect_op_numbers) — the extraction layer merges page numbers and footnote
+# references onto continuation fragments, which used to be stored as invented
+# operative numbers (S/RES/661(1990) held a '19.' on a mid-sentence fragment of
+# operative 3(c)); an unconfirmed number now stays inside the text and the element
+# gets no prefix and no operative label. (2) the same confirmation applies to
+# upper-case Roman parentheticals, which are otherwise the tail of a resolution
+# citation ('resolution 900 (IX) of 11 December 1954'). (3) every parse is checked
+# against its ARCHIVED SOURCE FILE (words in the source, or in the target document's
+# span of a multi-document source page, vs words the parse holds) so a document that
+# arrives truncated FAILS instead of being stored as 'parsed' — the defect that left
+# 145 documents at ~21% of their source with no flag at all.
 # sem-v4 (DOTTED ENUMERATORS + LONG SECTION HEADINGS): (1) a paragraph opening with a
 # CONFIRMED dotted enumerator ('1.1 By 2030 ...', '8.10 ...', '1.a ...') — the SDG-
 # target / forest-goal / programme-plan family — moves its marker to `prefix`, gets
@@ -88,7 +101,7 @@ from fulltext_common import ARCHIVE_ROOT, get_conn, sanitize_symbol, upsert_docu
 # descriptive title ('B. Advancing integration ...', 'III. Green economy ...') is now
 # recognised even past the 80-char guard, with a verb guard so a bold 'I. Decides ...'
 # operative is not swallowed. paragraph_type/positions/accounting are untouched.
-PARSER_VERSION = "sem-v4"
+PARSER_VERSION = "sem-v5"
 OUT_DIR = ARCHIVE_ROOT / "parsed_dev"
 
 # Opt-in source-defect rescue: when a resolution drops an operative NUMBER at
@@ -200,6 +213,15 @@ VOTE_KEY = {
     "non-voting": "non_voting", "absent": "absent",
 }
 MEETING_RE = re.compile(r"^\d+\s*(st|nd|rd|th)\s+(plenary\s+)?meeting\b", re.I)
+# sem-v5 DECISION FORMULA. A GA/ECOSOC *decision* has no "The General Assembly,"
+# opening formula: it prints "At its 87th plenary meeting, on 30 June 2023, the
+# General Assembly … decided …". Without this the state machine never left `front`
+# and the whole decision body was stamped type='frontmatter' (hidden by the site) --
+# the mechanism behind the volume-split children rendering as blank pages.
+DECISION_OPENING_RE = re.compile(
+    r"At\s+(?:its|the)\s+\d{1,4}\s*(?:st|nd|rd|th|d)\s*"
+    r"(?:\([^)]{0,24}\)\s*)?"                       # '48th (resumed) plenary meeting'
+    r"(?:plenary\s+|resumed\s+|informal\s+|formal\s+)?meeting\b", re.I)
 DATE_LINE_RE = re.compile(
     r"^\d{1,2}\s+(January|February|March|April|May|June|July|August|September|"
     r"October|November|December)\s+\d{4}\s*$"
@@ -652,6 +674,206 @@ def detect_dotted_enum(lrows: list["LRow"]) -> dict[int, tuple[str, int, str]]:
 
 
 # ---------------------------------------------------------------------------
+# sem-v5: MARKER SEQUENCE CONFIRMATION
+#
+# The raw layer is not trustworthy about leading numbers. The PDF extractor merges
+# hanging numbers back onto the text that follows them, and a page number, a
+# footnote reference or a column-margin artifact merges exactly like a real
+# operative marker does; the parser then stored it as an operative number that is
+# not in the source (263 such fabrications corpus-wide; `S/RES/661(1990)` held a
+# '19.' on a mid-sentence continuation of operative 3(c)). A marker is therefore
+# only accepted when the document's OWN numbering vouches for it — the same
+# discipline detect_dotted_enum() applies to SDG-style enumerators:
+#
+#   * it RESTARTS a list ('1.'), or
+#   * it CONTINUES a run already seen (1..MARKER_MAX_GAP ahead of a live value —
+#     the gap tolerates numbers the source itself dropped, cf.
+#     RESCUE_INFERRED_OPERATIVE), or
+#   * it OPENS a run that the next few candidates confirm (a '+1' successor within
+#     MARKER_LOOKAHEAD candidates), or
+#   * it reads unmistakably like an operative clause (capitalised finite operative
+#     lead verb) AND lies inside the band the document's own operative count allows.
+#
+# Nothing else is a marker. A refused number is NOT deleted: it stays inside the
+# element's text (a gap in labelling is recoverable, an invented legal citation is
+# a false statement), the element gets no prefix and no operative labeling, and the
+# refusal is recorded in `issues[]` so it is queryable in SQL after the fact.
+# ---------------------------------------------------------------------------
+
+MARKER_MAX_GAP = 3        # forward step tolerated inside a live run (source-dropped numbers)
+MARKER_LOOKAHEAD = 3      # candidates scanned ahead for a '+1' confirmation
+MARKER_BAND_SLACK = 3     # a marker may exceed the document's own operative count by <= 3
+
+# The remainder after a candidate marker that proves it is NOT an operative clause:
+# an old-style resolution heading printed in a volume / table of contents
+# ("1110 (XI). Admission of Morocco…", "(XI). …") — the leading number is that
+# entry's PAGE number, not a paragraph marker.
+_OLD_STYLE_HEADING_RE = re.compile(r"^\d{0,4}\s*\([IVXLCDM]+\)\s*\.")
+# An upper-case Roman parenthetical: never a subparagraph marker in this corpus
+# unless the sequence confirms it ('(IX) of 11 December 1954' is the tail of
+# 'resolution 900 (IX) of 11 December 1954' broken across lines).
+_UPPER_ROMAN_RE = re.compile(r"^[IVXLCDM]{1,7}$")
+
+_ROMAN_VALUES = {"i": 1, "v": 5, "x": 10, "l": 50, "c": 100, "d": 500, "m": 1000}
+
+
+def _roman_value(tok: str) -> int:
+    """Value of a Roman numeral token ('xiv' -> 14). 0 if not a Roman numeral."""
+    t = tok.lower()
+    if not t or any(ch not in _ROMAN_VALUES for ch in t):
+        return 0
+    total = prev = 0
+    for ch in reversed(t):
+        v = _ROMAN_VALUES[ch]
+        total += -v if v < prev else v
+        prev = max(prev, v)
+    return total
+
+
+def _op_verb_start(text: str) -> bool:
+    """True if `text` opens with a capitalised finite operative lead verb.
+
+    'Decides that ...', 'Also requests ...' -> True; 'nationals or in their
+    territories ...' (a mid-sentence continuation) -> False."""
+    t = text.strip()
+    if not t[:1].isupper():
+        return False
+    words = t.split()
+    w0 = words[0].strip(",.").lower()
+    if w0 in ("also", "further", "again", "finally", "moreover") and len(words) > 1:
+        w0 = words[1].strip(",.").lower()
+    return w0 in OPERATIVE_LEAD_VERBS
+
+
+def _num_marker_candidate(lr: "LRow") -> tuple[int, str] | None:
+    """(number, remaining text) if this row opens with a plausible 'N.' marker.
+
+    Pure lexical screen, no sequence context yet. Rejects the numbered resolution
+    TITLE form ('77/52. Subject'), volume/TOC heading lines whose leading number is
+    a page number ('1110 (XI). Admission of Morocco…'), and dot-leader TOC rows.
+    """
+    if lr.kind != "paragraph":
+        return None
+    c = lr.clean
+    if not c or TITLE_GA_NUM_RE.match(c):
+        return None
+    m = OP_NUM_RE.match(c)
+    if not m:
+        return None
+    rest = m.group(2).strip()
+    if _OLD_STYLE_HEADING_RE.match(rest) or _DOT_LEADER_RE.search(rest):
+        return None
+    return int(m.group(1)), rest
+
+
+def _marker_band(lrows: list["LRow"]) -> int:
+    """Highest number this document could legitimately have printed as a marker.
+
+    Two bounds, whichever is larger, both taken from the parser's INPUT (the raw
+    rows) and never from what the parse produced, so a document can never vouch for
+    a number by having stored it:
+      * its operative-shaped rows -- numeric marker candidates plus rows opening
+        with a finite operative verb;
+      * its body rows -- a document cannot number more paragraphs than it has rows.
+    Plus MARKER_BAND_SLACK for numbers the source itself dropped. What this rejects
+    is the page-number family: a table-of-contents page of 35 rows cannot carry
+    markers '59.'-'64.' (`A/RES/1110(XI)`), and a 12-row decision cannot carry
+    '177.' (`E/DEC/2010/235`).
+    """
+    op_shaped = body = 0
+    for lr in lrows:
+        if lr.kind != "paragraph" or not lr.clean:
+            continue
+        body += 1
+        if _num_marker_candidate(lr) is not None or _op_verb_start(lr.clean):
+            op_shaped += 1
+    return max(op_shaped, body) + MARKER_BAND_SLACK
+
+
+def detect_op_numbers(lrows: list["LRow"]) -> tuple[dict[int, int], list[tuple[int, int, str]]]:
+    """Confirm which leading 'N.' numbers are real operative markers.
+
+    Returns ({lrow_index: number} for CONFIRMED markers, [(lrow_index, number,
+    text_head)] for REFUSED ones). See the section header for the rule. Live runs
+    are cleared at an opening formula or an annex delimiter, so a second text block
+    never inherits the first block's numbering.
+    """
+    cands: list[tuple[int, int, str]] = []      # (lrow index, number, rest)
+    resets: set[int] = set()                    # candidate ordinals that start fresh
+    for i, lr in enumerate(lrows):
+        c = lr.clean
+        if not c:
+            continue
+        if OPENING_RE.match(c) or ANNEX_RE.match(c):
+            resets.add(len(cands))
+            continue
+        cand = _num_marker_candidate(lr)
+        if cand is not None:
+            cands.append((i, cand[0], cand[1]))
+
+    band = _marker_band(lrows)
+    confirmed: dict[int, int] = {}
+    refused: list[tuple[int, int, str]] = []
+    live: dict[int, int] = {}                   # last value seen -> candidate ordinal
+    for k, (idx, num, rest) in enumerate(cands):
+        if k in resets:
+            live.clear()
+        ok = False
+        if num > band:
+            ok = False                          # outside the document's own numbering
+        elif num == 1:
+            ok = True                           # a list may always restart
+        else:
+            for gap in range(1, MARKER_MAX_GAP + 1):
+                if (num - gap) in live:
+                    live.pop(num - gap)
+                    ok = True
+                    break
+            if not ok:
+                for j in range(k + 1, min(len(cands), k + 1 + MARKER_LOOKAHEAD)):
+                    if cands[j][1] == num + 1:
+                        ok = True
+                        break
+            if not ok and _op_verb_start(rest):
+                ok = True                       # unmistakable operative clause
+        if ok:
+            live[num] = k
+            confirmed[idx] = num
+        else:
+            refused.append((idx, num, rest[:60]))
+    return confirmed, refused
+
+
+def detect_upper_roman_parens(lrows: list["LRow"]) -> set[int]:
+    """Indices of '(IX)'-style UPPER-CASE Roman parentheticals that are confirmed
+    subparagraph markers (they continue, or open a run the next candidates confirm).
+
+    Everything else with that shape is the tail of a citation whose line broke after
+    the session number ('… resolution 900 (IX) of 11 December 1954'), which used to
+    be stored as a subparagraph marker in 815 rows across 677 documents."""
+    cands: list[tuple[int, int]] = []
+    for i, lr in enumerate(lrows):
+        if lr.kind != "paragraph" or not lr.clean:
+            continue
+        m = OP_PAREN_RE.match(lr.clean)
+        if m and _UPPER_ROMAN_RE.match(m.group(1)):
+            cands.append((i, _roman_value(m.group(1))))
+    confirmed: set[int] = set()
+    last: int | None = None
+    for k, (idx, val) in enumerate(cands):
+        ok = last is not None and val == last + 1
+        if not ok:
+            for j in range(k + 1, min(len(cands), k + 1 + MARKER_LOOKAHEAD)):
+                if cands[j][1] == val + 1:
+                    ok = True
+                    break
+        if ok:
+            confirmed.add(idx)
+            last = val
+    return confirmed
+
+
+# ---------------------------------------------------------------------------
 # Sub-paragraph level / (i) disambiguation
 # ---------------------------------------------------------------------------
 
@@ -992,6 +1214,10 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
     lrows = build_logical_rows(raw_rows, fmt)
     subres = detect_subres_blocks(lrows)
     dotted_enum = detect_dotted_enum(lrows)  # sem-v4: confirmed N.N / N.a enumerators
+    # sem-v5: only numbers the document's own sequence vouches for are markers.
+    op_numbers, refused_markers = detect_op_numbers(lrows)
+    refused_idx = {r[0] for r in refused_markers}
+    upper_roman_parens = detect_upper_roman_parens(lrows)
     # lrow indices whose positions are consumed by a block's merged title element
     title_skip: set[int] = set()
     for blk in subres.values():
@@ -1088,6 +1314,13 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
                               text_index=text_index)
             if note_id is not None:
                 el["note_ids"] = [note_id]
+            else:
+                # sem-v5: _footnote_text strips the leading marker glyph ('7 ', '1/ ',
+                # '3. '). Keep it as the note id instead of deleting it -- the
+                # citation link survives and the word conservation check balances.
+                m_mark = re.match(r"^\s*(\d{1,3})\s*[/.]?\s+\S", lr.clean)
+                if m_mark:
+                    el["note_ids"] = [int(m_mark.group(1))]
             elements.append(el)
             i += 1
             continue
@@ -1226,10 +1459,21 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
             title = _match_title(c, lr)
             if title is not None:
                 ttype, prefix, ttext = title
+                # sem-v5: a short decision prints title and decision on one line;
+                # emit the decision as its own body paragraph instead of burying it
+                # in the title element.
+                ttext, body_text = _split_title_body(ttext)
                 elements.append(_new_element(lr, type="title", section=section,
                                              prefix=prefix, text=ttext,
                                              text_index=text_index))
                 seen_title = True
+                if body_text:
+                    body_el = _new_element(lr, type="paragraph", section=section,
+                                           paragraph_type=None, level=1,
+                                           text=body_text, text_index=text_index)
+                    body_el["split_continuation"] = True
+                    elements.append(body_el)
+                    state = "decision"      # the body has started; never frontmatter
                 # PRSTs have no opening formula: their quoted body is a statement,
                 # so switch out of the frontmatter phase here.
                 if TITLE_PRST_RE.match(c):
@@ -1279,7 +1523,10 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
         # label operatives in the main section AND inside a scoped instrument annex
         in_main = section == "main"
         label_ops = in_main or annex_scoped
-        m_num = OP_NUM_RE.match(c)
+        # sem-v5: an unconfirmed leading number is NOT a marker. The row falls
+        # through to the ordinary text paths below with its number still inside the
+        # text, so nothing is deleted and nothing is invented.
+        m_num = OP_NUM_RE.match(c) if i in op_numbers else None
         if m_num and not TITLE_GA_NUM_RE.match(c) and not _style_is_heading(c, lr, state):
             op_tracker.top()
             last_op_number = int(m_num.group(1))
@@ -1296,9 +1543,14 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
         # only continue an already-running operative sequence, and only when the
         # clause opens with a finite operative verb -- so "232 .Recognizes",
         # "4 Calls", "13 Urges" are rescued without misreading years/quantities.
-        if state == "operative" and not m_num and not TITLE_GA_NUM_RE.match(c):
+        # sem-v5: the number must also CONTINUE the sequence (last+1..last+gap, or
+        # a restart at 1); a number the confirmation pass already refused can never
+        # come back in through this path.
+        if (state == "operative" and not m_num and not TITLE_GA_NUM_RE.match(c)
+                and i not in refused_idx):
             m_loose = OP_NUM_LOOSE_RE.match(c)
-            if m_loose:
+            if m_loose and (int(m_loose.group(1)) == 1
+                            or 0 < int(m_loose.group(1)) - last_op_number <= MARKER_MAX_GAP):
                 rest = m_loose.group(2).strip()
                 w0 = rest.split(" ", 1)[0].strip(",.").lower()
                 # source may drop the period AND glue the number to an adverb-led
@@ -1320,7 +1572,15 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
                     i += 1
                     continue
 
+        # sem-v5: an upper-case Roman parenthetical is only a subparagraph marker
+        # when the sequence confirms it; otherwise it is a citation tail
+        # ('… resolution 900 (IX) of 11 December 1954') and stays inside the text.
         m_par = OP_PAREN_RE.match(c)
+        if (m_par and state in ("operative", "preamble")
+                and _UPPER_ROMAN_RE.match(m_par.group(1))
+                and i not in upper_roman_parens):
+            refused_markers.append((i, 0, c[:60]))
+            m_par = None
         if m_par and state in ("operative", "preamble"):
             level, prefix = op_tracker.classify_paren(
                 m_par.group(1), next_tok=_next_paren_token(lrows, i + 1))
@@ -1372,6 +1632,36 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
                                          text=htext, text_index=text_index))
             i += 1
             continue
+
+        # 12b. sem-v5 EXIT FROM THE FRONT REGION.
+        # Rule 13 below is a catch-all: while the machine is in `front` EVERY line
+        # becomes type='frontmatter', which the site hides. Decisions have no
+        # opening formula, and a PDF/OCR resolution whose formula is garbled
+        # ('Thc General .111·n11h/t·.') never matches OPENING_RE either -- so whole
+        # bodies were being hidden (the blank-page class). Two shapes end the front
+        # region here, both body text by any reading:
+        #   * the decision formula ('At its 87th plenary meeting, on 30 June 2023,
+        #     the General Assembly … decided …');
+        #   * a substantial clause opening with a finite operative verb or a
+        #     preambular participle ('Recalling its resolution 1514 (XV) …').
+        # Both emit a real paragraph; paragraph_type stays NULL so no clause is
+        # labelled operative/preambular on this evidence alone.
+        if state in ("front", "blockhead") and not _heading_fp(c):
+            first = c.split(" ", 1)[0].strip(",.").lower()
+            body_shaped = (len(c.split()) >= 8
+                           and (first in OPERATIVE_LEAD_VERBS
+                                or first in PREAMBULAR_FIRST_WORDS))
+            # a row whose leading number the sequence pass REFUSED is still body
+            # text; refusing a marker must never move content into the hidden
+            # frontmatter bucket (it would trade a fabrication for a blank page).
+            if (DECISION_OPENING_RE.match(c) or body_shaped
+                    or i in refused_idx or OP_NUM_RE.match(c)):
+                elements.append(_new_element(
+                    lr, type="paragraph", section=section, paragraph_type=None,
+                    level=1, text=c, text_index=text_index))
+                state = "decision"
+                i += 1
+                continue
 
         # 13. frontmatter residue (session/agenda/masthead lines) -------------
         if state in ("front", "blockhead"):
@@ -1430,7 +1720,11 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
                     if nxt is not None and nxt > cur_ord + 1:
                         inferred, level = True, 2
                 else:
-                    nxt = _next_number_ahead(lrows, i + 1, paren=False)
+                    # sem-v5: the "confirmed gap ahead" that licenses the rescue must
+                    # be a CONFIRMED marker -- an invented number ahead must never
+                    # license inventing an operative label here.
+                    nxt = _next_number_ahead(lrows, i + 1, paren=False,
+                                             confirmed=op_numbers)
                     if nxt is not None and nxt > last_op_number + 1:
                         inferred, level = True, 1
             if inferred:
@@ -1482,6 +1776,18 @@ def parse_document(symbol: str, fmt: str, raw_rows: list[dict]) -> dict:
     # cleanly separable pass (additive; never touches text/positions/accounting).
     annotate_actions(elements)
 
+    # sem-v5: every refused marker is LEDGERED (a drop with no ledger is
+    # unauditable). The raw position is recorded so the claim can be checked
+    # against the source; `issues[]` is persisted verbatim to
+    # digitallibrary.document_parses, so the refusals are queryable in SQL.
+    for lidx, num, head in sorted(refused_markers):
+        pos = lrows[lidx].positions[0] if lrows[lidx].positions else -1
+        issues.append({
+            "position": pos,
+            "problem": "unconfirmed_marker",
+            "text_head": (f"{num}. " if num else "") + head,
+        })
+
     result = {
         "symbol": symbol,
         "format": fmt,
@@ -1507,12 +1813,14 @@ def _alpha_ord(s: str) -> int | None:
     return None
 
 
-def _next_number_ahead(lrows: list[LRow], i: int, paren: bool) -> int | None:
+def _next_number_ahead(lrows: list[LRow], i: int, paren: bool,
+                       confirmed: dict[int, int] | None = None) -> int | None:
     """Ordinal of the next labeled operative item ahead of lrows[i], or None.
 
     paren=False -> next top-level 'N.' number; paren=True -> next '(letter)' alpha
     ordinal. Scans a bounded window and stops at a hard structural boundary so the
-    look-ahead never crosses into another text/annex/preamble.
+    look-ahead never crosses into another text/annex/preamble. When `confirmed` is
+    given (sem-v5), only numbers the sequence pass accepted count as a number ahead.
     """
     n = len(lrows)
     j = i
@@ -1528,6 +1836,10 @@ def _next_number_ahead(lrows: list[LRow], i: int, paren: bool) -> int | None:
         if not paren:
             m = OP_NUM_RE.match(cj)
             if m and not TITLE_GA_NUM_RE.match(cj):
+                if confirmed is not None and j not in confirmed:
+                    j += 1
+                    steps += 1
+                    continue
                 return int(m.group(1))
         else:
             m = OP_PAREN_RE.match(cj)
@@ -1571,6 +1883,27 @@ def _op_lead_verb(rest: str) -> str | None:
             return f"{w} {words[1].strip(',')}"
         return w
     return None
+
+
+def _split_title_body(text: str) -> tuple[str, str | None]:
+    """Cut a run-together decision line into (title, body).
+
+    Short decisions print the title and the decision itself on ONE line:
+    '77/408. Appointment of members of the ACABQ At its 87th plenary meeting, on
+    30 June 2023, the General Assembly … appointed …'. Everything used to become
+    one type='title' element (479 documents, median 326 characters), so the
+    decision itself was never rendered as body text. The cut is made at the
+    sentence boundary immediately before the decision formula; if the formula opens
+    the line there is nothing to split.
+    """
+    m = DECISION_OPENING_RE.search(text)
+    if not m or m.start() == 0:
+        return text, None
+    head = text[:m.start()].rstrip().rstrip(",;:").rstrip()
+    body = text[m.start():].strip()
+    if not head or len(body.split()) < 4:
+        return text, None
+    return head, body
 
 
 def _match_title(c: str, lr: LRow) -> tuple[str, str | None, str] | None:
@@ -1654,8 +1987,9 @@ def _heading_level(lr: LRow) -> int:
 # ---------------------------------------------------------------------------
 
 
-def fetch_targets(limit: int | None, symbol: str | None, offset: int = 0) -> list[tuple[str, str, str]]:
-    """Return (symbol_normalized, lang, format) for parseable documents.
+def fetch_targets(limit: int | None, symbol: str | None,
+                  offset: int = 0) -> list[tuple[str, str, str, str | None, str | None]]:
+    """Return (symbol_normalized, lang, format, archive_path, converted_path).
 
     Targets any doc whose raw extraction is available: status IN
     ('extracted', 'parsed'). Including 'parsed' keeps re-parses working after the
@@ -1663,7 +1997,8 @@ def fetch_targets(limit: int | None, symbol: str | None, offset: int = 0) -> lis
     still finds every already-loaded doc).
     """
     sql = (
-        "SELECT df.symbol_normalized, df.lang, df.format FROM digitallibrary.document_files df "
+        "SELECT df.symbol_normalized, df.lang, df.format, df.archive_path, df.converted_path "
+        "FROM digitallibrary.document_files df "
         "WHERE df.status IN ('extracted', 'parsed') "
     )
     params: list[object] = []
@@ -1679,7 +2014,7 @@ def fetch_targets(limit: int | None, symbol: str | None, offset: int = 0) -> lis
         params.append(offset)
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
-        return [(r[0], r[1] or "en", r[2]) for r in cur.fetchall()]
+        return [(r[0], r[1] or "en", r[2], r[3], r[4]) for r in cur.fetchall()]
 
 
 def fetch_rows(conn, symbol: str, lang: str = "en") -> list[dict]:
@@ -1792,11 +2127,368 @@ def load_document(conn, symbol: str, lang: str, fmt: str, result: dict) -> int:
     return len(elements)
 
 
+# ---------------------------------------------------------------------------
+# sem-v5: CONSERVATION CHECKS
+#
+# Two denominators, neither of them derived from what the parse produced:
+#   (1) word accounting  -- every WORD of every raw row must end up in an element
+#       (text, prefix, structured vote lists, footnote marker ids) or in a raw row
+#       that `dropped[]` names with a reason. The pre-existing invariant only
+#       asserted that every raw POSITION was consumed by SOME element, which stays
+#       true when an element quietly loses text.
+#   (2) source conservation -- the archived SOURCE FILE is re-read here, by this
+#       module, and the words the parse holds are compared against it. For a Word
+#       source that is the whole file; for a PDF page holding several documents it
+#       is the target document's own span (its number/title anchor up to its
+#       adoption record or the next document's heading). Below TRUNCATION_FLOOR the
+#       document FAILS: it is not stored as 'parsed', the run exits non-zero, and
+#       the reason is written to the ledger. No extractor flag can suppress it --
+#       the 145 silently truncated documents all carried `anchor_found=True` and an
+#       empty flag list.
+# ---------------------------------------------------------------------------
+
+_WORD_RE = re.compile(r"[0-9A-Za-z]+")
+
+# Bar for source conservation. Word-format sources sit at >=0.85 (p01 of a
+# 150-document sample; minimum observed 0.76) and PDF span ratios at >=0.67 (p05 of
+# a 181-document sample, median 1.03), while the known-truncated documents sit at
+# 0.015-0.28 -- so 0.50 separates them with headroom on both sides and is NOT the
+# constraint that healthy documents scrape past.
+TRUNCATION_FLOOR = 0.50
+# Fallback floor, used when the span anchor cannot be trusted: the parse against the
+# AVERAGE document on its own source page (page words / documents the page prints,
+# counted from the page's own headings). A document holding less than a quarter of
+# that is truncated. This is what catches a truncation whose span anchor landed in
+# the page's table of contents (`A/RES/32/1`: 10 words where the page average is 56).
+WHOLE_SOURCE_FLOOR = 0.25
+# A span shorter than this is not a document, it is a table-of-contents entry or a
+# running head: the anchor is untrustworthy and the whole-source floor decides
+# instead. (The shortest genuine span seen in a 1,200-document sample is 42 words.)
+MIN_TRUSTED_SPAN_WORDS = 40
+
+# The organ opening formula as it appears in a SOURCE file (looser than OPENING_RE,
+# which matches a whole raw row: in a source read the formula sits inside a line).
+_SOURCE_OPENING_RE = re.compile(
+    r"\bThe\s+(General\s*,?\s*Assembly|Security\s+Council|Economic\s+and\s+Social\s+Council|"
+    r"Human\s+Rights\s+Council|Trusteeship\s+Council)\s*[,.]", re.I)
+
+# Old-style volume heading ("1110 (XI). Admission of …") and modern numbered title
+# ("32/1. Question of …"): where one document ends and the next begins on a shared
+# source page.
+_SRC_HEAD_OLD_RE = re.compile(r"(?m)^\s*\d{1,4}\s*\([IVXLCDM\-]+\)\s*\.")
+_SRC_HEAD_NEW_RE = re.compile(r"(?m)^\s*\d{1,3}/\d{1,4}[A-Z]?\s*\.")
+_SRC_HEAD_RESOLUTION_RE = re.compile(r"(?mi)^\s*Resolution\s+\d{1,4}\s*\(")
+# The adoption record that closes a resolution ("425th plenary meeting", "Adopted at
+# the 2932nd meeting", "Adopted without a vote").
+_SRC_ADOPTION_RE = re.compile(
+    r"\b\d{1,4}\s*(?:st|nd|rd|th|d)\b[^\n]{0,24}\bmeeting\b"
+    r"|\bAdopted\s+(?:at|by|unanimously|without)\b", re.I)
+
+# Symbol shapes we can anchor inside a source page.
+_SYM_OLD_RE = re.compile(r"^[AES]/(?:RES|DEC)/(\d{1,4})\(([A-Z][A-Z0-9\-]*)\)$")
+_SYM_NEW_RE = re.compile(r"^[AE]/(?:RES|DEC)/(\d{1,4})/(\d{1,4})[A-Z\-]*$")
+_SYM_SC_RE = re.compile(r"^S/RES/(\d{1,4})\((\d{4})\)$")
+
+
+# A heading belonging to ANOTHER document. Truncation is not the only crop defect:
+# a crop that runs PAST the document's own printed extent stores the neighbouring
+# resolution's text under this symbol, which is fabrication rather than loss
+# (`A/RES/1005(ES-II)` carries its neighbour's entire preamble). These match at the
+# START of an element only, so an in-sentence citation ('… resolution 1514 (XV) of
+# 14 December 1960 …') is never mistaken for a heading.
+_FOREIGN_HEAD_OLD_RE = re.compile(r"^(\d{1,4})\s*\(([A-Z][A-Z0-9\-]*)\)\s*[.,]")
+_FOREIGN_HEAD_NEW_RE = re.compile(r"^(\d{1,3}/\d{1,4})[A-Z]?\s*\.")
+_FOREIGN_HEAD_SC_RE = re.compile(r"^Resolution\s+(\d{1,4})\s*\(", re.I)
+
+
+def _own_document_numbers(symbol: str) -> set[str]:
+    """The document's own printed number(s), as they appear in a heading."""
+    out: set[str] = set()
+    m = _SYM_OLD_RE.match(symbol) or _SYM_SC_RE.match(symbol)
+    if m:
+        out.add(m.group(1))
+    m = _SYM_NEW_RE.match(symbol)
+    if m:
+        out.add(f"{m.group(1)}/{m.group(2)}")
+        out.add(m.group(2))
+    return out
+
+
+def check_overreach(symbol: str, result: dict) -> list[str]:
+    """Headings of OTHER documents inside this parse (the crop ran past its extent).
+
+    Returns the foreign document numbers found, in document order."""
+    own = _own_document_numbers(symbol)
+    if not own:
+        return []
+    found: list[str] = []
+    for el in result["elements"]:
+        # Footnotes ARE citations of other resolutions ('Resolution 1514 (XV).');
+        # only body/heading/title text can carry a neighbour's heading.
+        if el.get("type") in ("footnote", "vote_record", "divider", "table",
+                              "signature", "backmatter"):
+            continue
+        text = ((el.get("prefix") or "") + " " + (el.get("text") or "")).strip()
+        for rx in (_FOREIGN_HEAD_OLD_RE, _FOREIGN_HEAD_NEW_RE, _FOREIGN_HEAD_SC_RE):
+            m = rx.match(text)
+            if not m:
+                continue
+            num = m.group(1)
+            if num not in own and num.split("/")[-1] not in own and num not in found:
+                found.append(num)
+            break
+    return found
+
+
+def _word_count(text: str) -> int:
+    return len(_WORD_RE.findall(text or ""))
+
+
+def _word_bag(text: str) -> dict[str, int]:
+    bag: dict[str, int] = {}
+    for w in _WORD_RE.findall(text or ""):
+        w = w.lower()
+        bag[w] = bag.get(w, 0) + 1
+    return bag
+
+
+def parse_word_count(result: dict) -> int:
+    """Words the parse actually holds (element prefixes + text + vote country lists)."""
+    n = 0
+    for el in result["elements"]:
+        n += _word_count((el.get("prefix") or "") + " " + (el.get("text") or ""))
+        vote = el.get("vote")
+        if vote:
+            for lst in vote.values():
+                n += _word_count(" ".join(lst))
+    return n
+
+
+def check_word_accounting(result: dict, raw_rows: list[dict]) -> list[str]:
+    """Words of the raw rows that no element and no ledgered drop accounts for.
+
+    Returned as a sorted 'token xN' list (empty = conserved). The only structural
+    re-encodings allowed are named here: vote tally LABELS become the `vote` dict's
+    keys, and a footnote's leading marker glyph becomes `note_ids`.
+    """
+    raw_bag: dict[str, int] = {}
+    for row in raw_rows:
+        for w, c in _word_bag(row.get("text") or "").items():
+            raw_bag[w] = raw_bag.get(w, 0) + c
+    out_bag: dict[str, int] = {}
+
+    def add(text: str) -> None:
+        for w, c in _word_bag(text).items():
+            out_bag[w] = out_bag.get(w, 0) + c
+
+    for el in result["elements"]:
+        add((el.get("prefix") or "") + " " + (el.get("text") or ""))
+        vote = el.get("vote")
+        if vote:
+            for key, lst in vote.items():
+                add(" ".join(lst))
+                add(key.replace("_", " "))          # 'In favour:' label -> vote key
+        if el.get("type") == "footnote":
+            add(" ".join(str(x) for x in (el.get("note_ids") or [])))   # marker glyph
+    by_pos = {row["position"]: row.get("text") or "" for row in raw_rows}
+    for d in result.get("dropped", []):
+        add(by_pos.get(d["position"], ""))
+
+    missing = []
+    for w, c in raw_bag.items():
+        gap = c - out_bag.get(w, 0)
+        if gap > 0:
+            missing.append((w, gap))
+    missing.sort(key=lambda x: (-x[1], x[0]))
+    return [f"{w} x{c}" if c > 1 else w for w, c in missing]
+
+
+def read_source_text(fmt: str, archive_path: str | None,
+                     converted_path: str | None) -> str:
+    """Re-read the ARCHIVED SOURCE FILE independently of the extraction layer.
+
+    Raises FileNotFoundError / any reader error to the caller: an unreadable source
+    is reported as a failure, never as a silent pass.
+    """
+    if fmt == "pdf":
+        rel = archive_path
+    else:
+        rel = converted_path or archive_path
+    if not rel:
+        raise FileNotFoundError("no archive_path on the ledger row")
+    path = ARCHIVE_ROOT / rel
+    if not path.exists():
+        raise FileNotFoundError(str(path))
+    if path.suffix.lower() == ".pdf":
+        import fitz                                     # pymupdf
+        with fitz.open(str(path)) as doc:
+            return "\n".join(page.get_text() for page in doc)
+    if path.suffix.lower() == ".docx":
+        import docx                                     # python-docx
+        d = docx.Document(str(path))
+        parts = [p.text for p in d.paragraphs]
+        for table in d.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    parts.append(cell.text)
+        return "\n".join(parts)
+    return path.read_text(errors="ignore")
+
+
+def _source_anchor(symbol: str) -> re.Pattern | None:
+    """Regex locating the target document's own number inside a source page."""
+    m = _SYM_OLD_RE.match(symbol)
+    if m:
+        return re.compile(rf"{m.group(1)}\s*\(\s*{m.group(2)}\s*\)")
+    m = _SYM_SC_RE.match(symbol)
+    if m:
+        return re.compile(rf"{m.group(1)}\s*\(\s*{m.group(2)}\s*\)")
+    m = _SYM_NEW_RE.match(symbol)
+    if m:
+        return re.compile(rf"\b{m.group(1)}\s*/\s*{m.group(2)}\b")
+    return None
+
+
+def source_span_words(symbol: str, src: str) -> int | None:
+    """Words of the target document's own span inside a multi-document source page.
+
+    From the document's number anchor to whichever comes first: its adoption record
+    or the next document's heading. The anchor usually occurs several times on a
+    page (the printed heading, running heads, cross-references such as 'See
+    resolution 357 (IV) on this page'), so occurrences are ranked: a HEADING-shaped
+    one (line start, followed by a period) that contains the organ opening formula
+    wins, then heading-shaped, then any occurrence whose span holds the opening
+    formula, then the rest. Within a rank the SMALLEST span is taken, so a duplicate
+    heading never inflates the denominator. None when the symbol shape cannot be
+    anchored -- reported as 'unchecked', never as a pass.
+    """
+    rx = _source_anchor(symbol)
+    if rx is None:
+        return None
+    ranked: dict[int, list[int]] = {0: [], 1: [], 2: [], 3: []}
+    for m in rx.finditer(src):
+        line_start = src.rfind("\n", 0, m.start()) + 1
+        is_heading = (not src[line_start:m.start()].strip()
+                      and src[m.end():m.end() + 2].lstrip()[:1] == ".")
+        rest = src[m.start():]
+        ends = [len(rest)]
+        m_adopt = _SRC_ADOPTION_RE.search(rest, 30)
+        if m_adopt:
+            ends.append(m_adopt.end())
+        for head_re in (_SRC_HEAD_OLD_RE, _SRC_HEAD_NEW_RE):
+            m_head = head_re.search(rest, 60)
+            if m_head:
+                ends.append(m_head.start())
+        span = rest[:min(ends)]
+        n = _word_count(span)
+        if not n:
+            continue
+        has_open = bool(_SOURCE_OPENING_RE.search(span))
+        rank = 0 if (is_heading and has_open) else 1 if is_heading else 2 if has_open else 3
+        ranked[rank].append(n)
+    for rank in (0, 1, 2, 3):
+        if ranked[rank]:
+            return min(ranked[rank])
+    return None
+
+
+def source_conservation(symbol: str, fmt: str, archive_path: str | None,
+                        converted_path: str | None, result: dict) -> dict:
+    """Compare the parse against its archived source. Never consults extractor flags.
+
+    status: 'ok' | 'truncated' | 'unchecked' | 'unreadable'
+    """
+    parse_words = parse_word_count(result)
+    rep = {"status": "unchecked", "parse_words": parse_words,
+           "source_words": None, "ratio": None, "reason": ""}
+    if not (archive_path or converted_path):
+        rep["reason"] = "no source file on the ledger row (volume-split child)"
+        return rep
+    try:
+        src = read_source_text(fmt, archive_path, converted_path)
+    except Exception as exc:
+        rep["status"] = "unreadable"
+        rep["reason"] = f"{type(exc).__name__}: {exc}"
+        return rep
+    whole_words = _word_count(src)
+    rep["whole_source_words"] = whole_words
+    rep["whole_ratio"] = round(parse_words / whole_words, 4) if whole_words else None
+    src_words = source_span_words(symbol, src) if fmt == "pdf" else whole_words
+    rep["source_words"] = src_words
+    lost_opening = bool(_SOURCE_OPENING_RE.search(src)) and not _SOURCE_OPENING_RE.search(
+        " ".join((el.get("text") or "") for el in result["elements"]))
+
+    # Floor 2 (no anchoring needed): a document cannot be a twentieth of its own
+    # source page. It is the FALLBACK, used only when the span denominator cannot be
+    # trusted -- no anchor at all, or a span too short to be a document (the anchor
+    # landed in the page's table of contents: `A/RES/32/1` anchors on a 14-word TOC
+    # entry and its span check would pass at 0.71 while the parse holds 10 of the
+    # page's 675 words). A trusted span is target-specific and always wins, so a
+    # short resolution on a dense volume page is not failed for being 4% of it.
+    span_trusted = src_words is not None and src_words >= MIN_TRUSTED_SPAN_WORDS
+    if not span_trusted and whole_words:
+        # How many documents does this source print? Its own headings say. The
+        # expected share is the page average, and a document that holds less than
+        # WHOLE_SOURCE_FLOOR of the average document on its own page is truncated.
+        # (A fixed fraction of the page cannot work: a page may print 3 documents or
+        # 40 -- `A/RES/1768(XVII)` is 951 words on a 37,700-word volume page and is
+        # complete.)
+        n_docs = max(1, len(_SRC_HEAD_OLD_RE.findall(src))
+                     + len(_SRC_HEAD_NEW_RE.findall(src))
+                     + len(_SRC_HEAD_RESOLUTION_RE.findall(src)))
+        expected = whole_words / n_docs
+        rep["source_words"] = round(expected)
+        rep["ratio"] = round(parse_words / expected, 4) if expected else None
+        if expected and parse_words < WHOLE_SOURCE_FLOOR * expected:
+            rep["status"] = "truncated"
+            rep["reason"] = (
+                f"parse holds {parse_words} words; its source prints {n_docs} document(s) "
+                f"in {whole_words} words, so this one should hold about {expected:.0f} "
+                f"({100 * parse_words / expected:.1f}% of it, floor "
+                f"{100 * WHOLE_SOURCE_FLOOR:.0f}%)"
+                + ("; source has an opening formula, parse has none" if lost_opening else ""))
+            return rep
+    if src_words is None:
+        rep["reason"] = ("no source anchor for this symbol shape; only the whole-source "
+                         f"floor applied (ratio {rep['whole_ratio']})")
+        return rep
+    if not src_words:
+        rep["reason"] = "source holds no words"
+        return rep
+    ratio = parse_words / src_words
+    rep["ratio"] = round(ratio, 4)
+    rep["status"] = "ok" if ratio >= TRUNCATION_FLOOR else "truncated"
+    if rep["status"] == "truncated":
+        rep["reason"] = (f"parse holds {parse_words} of {src_words} source words "
+                         f"({100 * ratio:.1f}%), floor {100 * TRUNCATION_FLOOR:.0f}%"
+                         + ("; source has an opening formula, parse has none"
+                            if lost_opening else ""))
+    return rep
+
+
 def _check_accounting(result: dict, raw_rows: list[dict]) -> str | None:
-    """Return an error string if the accounting invariant is violated, else None."""
+    """Return an error string if the accounting invariant is violated, else None.
+
+    Two halves, because the position half alone is satisfied by an element whose
+    text has nothing to do with the rows it claims (the `A-FABRICATED-TEXT`
+    control: replace every element's text with invented prose, leave positions
+    untouched, and the old check stayed quiet):
+
+      * POSITIONS -- every raw position is consumed exactly once, by an element or
+        by a ledgered drop;
+      * TEXT -- every element's word multiset is a SUBSET of the union of the raw
+        rows it names in `positions[]`. The parser may drop, reorder or re-prefix
+        words; it may never introduce one. The only synthetic strings it is allowed
+        to emit are named here (the 'Vote record' placeholder and the vote dict's
+        own keys), so an allowance cannot quietly widen.
+    """
     all_positions = {r["position"] for r in raw_rows}
     consumed: list[int] = []
     for el in result["elements"]:
+        # a split element (one raw row cut into title + body) re-uses its parent's
+        # positions; they are counted once, on the element that owns them.
+        if el.get("split_continuation"):
+            continue
         consumed.extend(el["positions"])
     for d in result["dropped"]:
         consumed.append(d["position"])
@@ -1810,7 +2502,271 @@ def _check_accounting(result: dict, raw_rows: list[dict]) -> str | None:
         return f"unaccounted positions: {sorted(missing)[:10]}"
     if extra:
         return f"phantom positions: {sorted(extra)[:10]}"
+
+    by_pos = {r["position"]: (r.get("text") or "") for r in raw_rows}
+    for idx, el in enumerate(result["elements"]):
+        source = " ".join(by_pos.get(p, "") for p in el.get("positions") or [])
+        have = _word_bag(source)
+        want = _word_bag((el.get("prefix") or "") + " " + (el.get("text") or ""))
+        if el.get("type") == "vote_record":
+            for key, lst in (el.get("vote") or {}).items():
+                if not lst:
+                    continue          # empty tally: its label never appeared in the raw
+                for w, c in _word_bag(" ".join(lst) + " " + key.replace("_", " ")).items():
+                    want[w] = want.get(w, 0) + c
+            for w in ("vote", "record"):          # the 'Vote record' placeholder
+                want.pop(w, None)
+        invented = [w for w, c in want.items() if c > have.get(w, 0)]
+        if invented:
+            return (f"invented text in element {idx} (type={el.get('type')}, "
+                    f"positions={el.get('positions')}): {sorted(invented)[:8]}")
     return None
+
+
+# ---------------------------------------------------------------------------
+# Self-test: NEGATIVE CONTROLS for the sem-v5 guards
+#
+# Doctrine: "a check that has never been shown to fail is absent, not passing."
+# Every control below damages a real-shaped input and asserts the guard REJECTS it,
+# and every damaging control is paired with an undamaged one that must stay quiet,
+# so a guard that simply always fires cannot pass this suite.
+# ---------------------------------------------------------------------------
+
+
+def _row(pos: int, text: str, kind: str = "paragraph", **props) -> dict:
+    return {"position": pos, "kind": kind, "text": text, "style_id": props.pop("style", None),
+            "style_name": None, "numbering": None, "props": props or {},
+            "table_cell": None, "hyperlinks": None, "footnote_ref": None}
+
+
+def _self_test() -> int:
+    failures: list[str] = []
+
+    def check(cond: bool, msg: str) -> None:
+        if not cond:
+            failures.append(msg)
+
+    def parse(texts: list[str], fmt: str = "pdf") -> dict:
+        return parse_document("TEST", fmt, [_row(i, t) for i, t in enumerate(texts)])
+
+    clean_body = [
+        "Resolution 661 (1990)",
+        "The Security Council,",
+        "Recalling its resolution 660 (1990),",
+        "1. Determines that Iraq has failed to comply;",
+        "2. Decides to take the following measures;",
+        "3. Decides that all States shall prevent:",
+        "(a) The import into their territories of all commodities;",
+        "(b) Any activities by their nationals which would promote;",
+        "4. Decides that all States shall not make available funds;",
+        "5. Calls upon all States to act strictly in accordance;",
+    ]
+
+    # --- POSITIVE control: an undamaged sequence keeps every marker -----------
+    good = parse(clean_body)
+    pfx = [e.get("prefix") for e in good["elements"] if e.get("prefix")]
+    check(pfx == ["1.", "2.", "3.", "(a)", "(b)", "4.", "5."],
+          f"positive control: clean 1..5 sequence lost markers -> {pfx}")
+    check(not [i for i in good["issues"] if i["problem"] == "unconfirmed_marker"],
+          "positive control: clean sequence produced marker refusals")
+
+    # --- NEGATIVE control 1: the S/RES/661(1990) fabrication ------------------
+    damaged = list(clean_body)
+    damaged.insert(8, "19. nationals or in their territories which promote or are "
+                      "calculated to promote such sale or supply;")
+    bad = parse(damaged)
+    prefixes = [e.get("prefix") for e in bad["elements"] if e.get("prefix")]
+    check("19." not in prefixes,
+          f"NEGATIVE CONTROL FAILED: invented marker '19.' was accepted -> {prefixes}")
+    check([p for p in prefixes if p in ("3.", "4.", "5.")] == ["3.", "4.", "5."],
+          f"invented-marker control damaged the genuine sequence -> {prefixes}")
+    refusals = [i for i in bad["issues"] if i["problem"] == "unconfirmed_marker"]
+    check(len(refusals) == 1 and refusals[0]["text_head"].startswith("19."),
+          f"refused marker was not ledgered -> {refusals}")
+    kept_text = " ".join(e.get("text") or "" for e in bad["elements"])
+    check("19. nationals or in their territories" in kept_text,
+          "refusing a marker DELETED text; it must stay inside the element")
+
+    # --- NEGATIVE control 2: a page number ahead of the sequence --------------
+    pagenum = list(clean_body)
+    pagenum.insert(6, "26. which the Council will need to take further measures under;")
+    pn = parse(pagenum)
+    check("26." not in [e.get("prefix") for e in pn["elements"]],
+          "NEGATIVE CONTROL FAILED: out-of-band number '26.' accepted as a marker")
+
+    # --- NEGATIVE control 2b: page numbers that form their own tidy run -------
+    # A table-of-contents page carries '59.', '60.', '61.' as PAGE numbers; they
+    # chain perfectly, so only the band (a document cannot number more paragraphs
+    # than it has rows) can reject them.
+    toc = parse([
+        "Resolution 1110 (XI)",
+        "The General Assembly,",
+        "59. Admission of Morocco to membership in the United Nations",
+        "60. Admission of Tunisia to membership in the United Nations",
+        "61. Report of the Security Council on its work",
+    ])
+    check(not [e.get("prefix") for e in toc["elements"] if e.get("prefix")],
+          "NEGATIVE CONTROL FAILED: page numbers '59.'-'61.' accepted as markers "
+          f"-> {[e.get('prefix') for e in toc['elements'] if e.get('prefix')]}")
+
+    # --- NEGATIVE control 3: citation tail read as a Roman subparagraph -------
+    cite = list(clean_body)
+    cite.insert(7, "(IX) of 11 December 1954 and 910 (X) of 29 November 1955,")
+    ct = parse(cite)
+    check("(IX)" not in [e.get("prefix") for e in ct["elements"]],
+          "NEGATIVE CONTROL FAILED: citation tail '(IX)' accepted as a subparagraph marker")
+    roman = parse(clean_body[:6] + [
+        "(I) To examine the reports on the progress of implementation;",
+        "(II) To seek from all States further information;",
+        "(III) To report on its work to the Council;",
+    ])
+    check([e.get("prefix") for e in roman["elements"] if e.get("prefix") and "I" in e["prefix"]]
+          == ["(I)", "(II)", "(III)"],
+          "positive control: a confirmed (I)(II)(III) run was refused")
+
+    # --- NEGATIVE control 4: word accounting sees text vanish ----------------
+    rows = [_row(i, t) for i, t in enumerate(clean_body)]
+    res = parse_document("TEST", "pdf", rows)
+    check(check_word_accounting(res, rows) == [],
+          "positive control: word accounting reports loss on an undamaged parse")
+    res["elements"][3]["text"] = res["elements"][3]["text"].replace("Iraq", "")
+    lost = check_word_accounting(res, rows)
+    check(lost == ["iraq"],
+          f"NEGATIVE CONTROL FAILED: word accounting missed a deleted word -> {lost}")
+
+    # --- NEGATIVE control 4b: A-FABRICATED-TEXT ------------------------------
+    # Positions intact, text invented. The position-only invariant stayed quiet on
+    # exactly this damage, which is why the parser could report "0 accounting
+    # failures" while the corpus held invented markers.
+    fab_rows = [_row(i, t) for i, t in enumerate(clean_body)]
+    fab = parse_document("TEST", "pdf", fab_rows)
+    check(_check_accounting(fab, fab_rows) is None,
+          "positive control: accounting reports invented text on an undamaged parse")
+    fab["elements"][4]["text"] = ("The Council authorizes the use of force against "
+                                  "any State that fails to comply.")
+    err_fab = _check_accounting(fab, fab_rows)
+    check(err_fab is not None and "invented text" in err_fab,
+          f"NEGATIVE CONTROL FAILED (A-FABRICATED-TEXT): invented prose accepted "
+          f"-> {err_fab!r}")
+
+    # --- NEGATIVE control 4c: decision bodies must not be frontmatter --------
+    # A GA decision has no opening formula. Before sem-v5 the state machine never
+    # left `front`, so the decision itself was typed 'frontmatter' and hidden.
+    dec = parse([
+        "77/408. Appointment of members of the Advisory Committee",
+        "At its 87th plenary meeting, on 30 June 2023, the General Assembly, on the "
+        "recommendation of the Fifth Committee, appointed Minhong Yi (Republic of "
+        "Korea) as a member of the Advisory Committee.",
+        "As a result, the Advisory Committee is composed as follows: Surendra Kumar "
+        "Adhana (India), Yves Eric Ahoussougbemey (Benin).",
+    ])
+    types = [e["type"] for e in dec["elements"]]
+    check("frontmatter" not in types,
+          f"NEGATIVE CONTROL FAILED: a decision body was typed frontmatter -> {types}")
+    check(types.count("paragraph") == 2,
+          f"decision body did not become two paragraphs -> {types}")
+
+    # --- NEGATIVE control 4d: title and decision on ONE line -----------------
+    one_line = parse([
+        "77/547. Problems arising from the accumulation of conventional ammunition "
+        "stockpiles in surplus At its 56th (resumed) plenary meeting, on 30 December "
+        "2022, the General Assembly decided to defer consideration of the item.",
+    ])
+    check([e["type"] for e in one_line["elements"]] == ["title", "paragraph"],
+          "NEGATIVE CONTROL FAILED: title+decision stayed one element -> "
+          f"{[(e['type'], (e['text'] or '')[:40]) for e in one_line['elements']]}")
+    check(len(one_line["elements"]) == 2
+          and one_line["elements"][0]["text"].endswith("surplus")
+          and one_line["elements"][1]["text"].startswith("At its 56th"),
+          "title/body split fell in the wrong place -> "
+          f"{[(e['text'] or '')[:60] for e in one_line['elements']]}")
+    split_rows = [_row(0, " ".join(e["text"] for e in one_line["elements"]))]
+    check(_check_accounting(parse_document("TEST", "pdf", split_rows), split_rows) is None,
+          "a split title/body row broke the accounting invariant")
+
+    # --- NEGATIVE control 4e: the crop that runs PAST the document -----------
+    over = {"elements": [
+        {"type": "frontmatter", "text": "Resolution 1004 (ES-Il)", "prefix": None},
+        {"type": "opening", "text": "The General Assembly,", "prefix": None},
+        {"type": "paragraph", "text": "Considering that the United Nations is based "
+                                      "on sovereign equality,", "prefix": None},
+    ]}
+    check(check_overreach("A/RES/1005(ES-II)", over) == ["1004"],
+          "NEGATIVE CONTROL FAILED: a neighbouring resolution's heading inside the "
+          f"parse was not detected -> {check_overreach('A/RES/1005(ES-II)', over)}")
+    cite_only = {"elements": [
+        {"type": "title", "text": "Right of peoples to self-determination", "prefix": "79/104."},
+        {"type": "paragraph", "text": "Recalling its resolution 1514 (XV) of 14 "
+                                      "December 1960,", "prefix": None},
+        {"type": "footnote", "text": "Resolution 1514 (XV).", "prefix": None},
+    ]}
+    check(check_overreach("A/RES/79/104", cite_only) == [],
+          "positive control: a citation of another resolution was mistaken for "
+          f"over-reach -> {check_overreach('A/RES/79/104', cite_only)}")
+
+    # --- NEGATIVE control 5: source conservation sees truncation -------------
+    import tempfile
+    src_body = ("701 (VII). Korea: reports of the United Nations Agent General\n"
+                "The General Assembly,\n"
+                + " ".join(f"word{i}" for i in range(300)) + "\n"
+                "425th plenary meeting, 8 April 1953.\n"
+                "702 (VII). Another decision entirely\n"
+                + " ".join(f"other{i}" for i in range(300)) + "\n")
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
+        fh.write(src_body)
+        src_path = fh.name
+    full = {"elements": [{"type": "opening", "text": "The General Assembly,", "prefix": None}]
+            + [{"type": "paragraph", "text": " ".join(f"word{i}" for i in range(300)),
+                "prefix": None}]}
+    rep_ok = source_conservation("A/RES/701(VII)", "pdf", src_path, None, full)
+    check(rep_ok["status"] == "ok",
+          f"positive control: a complete parse was called {rep_ok['status']} ({rep_ok})")
+    stub = {"elements": [{"type": "title", "text": "701 (VII). Korea: reports of the "
+                                                   "United Nations", "prefix": None}]}
+    rep_bad = source_conservation("A/RES/701(VII)", "pdf", src_path, None, stub)
+    check(rep_bad["status"] == "truncated",
+          f"NEGATIVE CONTROL FAILED: title-only parse was not called truncated ({rep_bad})")
+    rep_missing = source_conservation("A/RES/701(VII)", "pdf",
+                                      src_path + ".does-not-exist", None, full)
+    check(rep_missing["status"] == "unreadable",
+          f"NEGATIVE CONTROL FAILED: a missing source file did not fail ({rep_missing})")
+    Path(src_path).unlink()
+
+    # --- NEGATIVE control 5b: the anchor lands in a table of contents --------
+    # `A/RES/32/1`'s only anchor is its TOC entry, so the span denominator is 14
+    # words and the span check would pass at 0.71 on a 10-word parse. The span must
+    # be distrusted below MIN_TRUSTED_SPAN_WORDS and the page-average floor decide.
+    toc_src = ("701 (VII). Korea: reports of the Agent General ......... 13\n"
+               "702 (VII). Financial reports and accounts ......... 14\n"
+               "703 (VII). Question of the Trust Territory ......... 15\n"
+               + " ".join(f"body{i}" for i in range(420)) + "\n")
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
+        fh.write(toc_src)
+        toc_path = fh.name
+    toc_stub = {"elements": [{"type": "title", "text": "701 (VII). Korea: reports of "
+                                                       "the Agent General", "prefix": None}]}
+    rep_toc = source_conservation("A/RES/701(VII)", "pdf", toc_path, None, toc_stub)
+    check(rep_toc["status"] == "truncated",
+          f"NEGATIVE CONTROL FAILED: a parse of one TOC line passed because its span "
+          f"anchor landed in the table of contents ({rep_toc})")
+    toc_full = {"elements": [{"type": "paragraph",
+                              "text": " ".join(f"body{i}" for i in range(140)),
+                              "prefix": None}]}
+    check(source_conservation("A/RES/701(VII)", "pdf", toc_path, None,
+                              toc_full)["status"] == "ok",
+          "positive control: a document holding its page share was called truncated")
+    Path(toc_path).unlink()
+
+    # --- NEGATIVE control 6: the span must not swallow the neighbour ---------
+    span = source_span_words("A/RES/701(VII)", src_body)
+    check(span is not None and 290 < span < 320,
+          f"span anchoring wrong: expected ~305 words for the target only, got {span}")
+
+    for f in failures:
+        print(f"  FAIL {f}")
+    print(f"\n{'FAIL' if failures else 'PASS'} — self-test: "
+          f"{len(failures)} failing control(s)")
+    return 1 if failures else 0
 
 
 BATCH_DOCS = 20  # docs per short-lived DB connection (mirrors fulltext_extract_raw.py)
@@ -1826,7 +2782,12 @@ def main() -> int:
                     help="load the semantic DB tables (migration 003) alongside JSON")
     ap.add_argument("--db-only", action="store_true",
                     help="load the semantic DB only; skip writing JSON files")
+    ap.add_argument("--self-test", action="store_true",
+                    help="run the sem-v5 negative controls (no DB, no archive) and exit")
     args = ap.parse_args()
+
+    if args.self_test:
+        return _self_test()
 
     to_db = args.to_db or args.db_only
     write_json = not args.db_only
@@ -1845,22 +2806,69 @@ def main() -> int:
 
     n_ok = 0
     n_acct_fail = 0
+    n_word_fail = 0
     n_loaded = 0
     n_failed = 0
+    n_truncated = 0
+    n_unreadable = 0
+    n_unchecked = 0
+    n_overreach = 0
+    n_markers_refused = 0
     total_elems = 0
+    truncated_syms: list[str] = []
     for start in range(0, len(targets), BATCH_DOCS):
         chunk = targets[start:start + BATCH_DOCS]
         with get_conn() as conn:
-            for symbol, lang, fmt in chunk:
+            for symbol, lang, fmt, archive_path, converted_path in chunk:
                 try:
                     raw_rows = fetch_rows(conn, symbol, lang)
                     result = parse_document(symbol, fmt, raw_rows)
+                    n_markers_refused += sum(
+                        1 for i in result["issues"] if i["problem"] == "unconfirmed_marker")
                     err = _check_accounting(result, raw_rows)
                     if err:
                         n_acct_fail += 1
                         result.setdefault("issues", []).append(
                             {"position": -1, "problem": "accounting", "text_head": err})
                         print(f"  ! {symbol}: ACCOUNTING {err}")
+                    lost = check_word_accounting(result, raw_rows)
+                    if lost:
+                        n_word_fail += 1
+                        result["issues"].append(
+                            {"position": -1, "problem": "word_accounting",
+                             "text_head": f"{len(lost)} unaccounted word type(s): "
+                                          + ", ".join(lost[:12])})
+                        print(f"  ! {symbol}: WORDS unaccounted {lost[:8]}")
+                    # source conservation: the check the 145 silently truncated
+                    # documents would have failed. Runs on every document; an
+                    # unreadable or unanchorable source is reported, never a pass.
+                    cons = source_conservation(symbol, fmt, archive_path,
+                                               converted_path, result)
+                    result["source_conservation"] = cons
+                    # the other direction of the same crop defect: text belonging to
+                    # the NEIGHBOURING document stored under this symbol.
+                    foreign = check_overreach(symbol, result)
+                    if foreign:
+                        n_overreach += 1
+                        result["issues"].append(
+                            {"position": -1, "problem": "source_overreach",
+                             "text_head": "headings of other documents inside this "
+                                          f"parse: {', '.join(foreign)}"})
+                        print(f"  ! {symbol}: OVERREACH carries headings of {foreign}")
+                    if cons["status"] != "ok":
+                        result["issues"].append(
+                            {"position": -1, "problem": f"source_{cons['status']}",
+                             "text_head": cons["reason"]
+                                          or f"ratio={cons['ratio']}"})
+                    if cons["status"] == "truncated":
+                        n_truncated += 1
+                        truncated_syms.append(symbol)
+                        print(f"  ! {symbol}: TRUNCATED {cons['reason']}")
+                    elif cons["status"] == "unreadable":
+                        n_unreadable += 1
+                        print(f"  ! {symbol}: SOURCE UNREADABLE {cons['reason']}")
+                    elif cons["status"] == "unchecked":
+                        n_unchecked += 1
                     if write_json:
                         out_path = out_dir / f"{sanitize_symbol(symbol)}.json"
                         out_path.write_text(
@@ -1868,7 +2876,20 @@ def main() -> int:
                             encoding="utf-8")
                     if to_db:
                         total_elems += load_document(conn, symbol, lang, fmt, result)
-                        upsert_document_file(conn, symbol, lang, status="parsed", error=None)
+                        # A truncated / unverifiable-source parse is NEVER advanced to
+                        # 'parsed': the rows are still written (nothing is deleted) but
+                        # the ledger says the document is not fit, so the class cannot
+                        # disappear again behind a green status.
+                        if cons["status"] in ("truncated", "unreadable") or foreign:
+                            reason = (f"source_{cons['status']}: {cons['reason']}"
+                                      if cons["status"] in ("truncated", "unreadable")
+                                      else f"source_overreach: carries headings of "
+                                           f"{', '.join(foreign)}")
+                            upsert_document_file(
+                                conn, symbol, lang, status="parse_failed",
+                                error=reason[:500])
+                        else:
+                            upsert_document_file(conn, symbol, lang, status="parsed", error=None)
                         conn.commit()
                         n_loaded += 1
                     n_ok += 1
@@ -1889,10 +2910,26 @@ def main() -> int:
             print(f"  parsed {done}/{len(targets)} ok={n_ok} loaded={n_loaded} failed={n_failed}")
 
     print(f"\nDone: {n_ok} parsed, {n_acct_fail} accounting failures, "
-          f"{n_failed} failed.")
+          f"{n_word_fail} word-accounting failures, {n_failed} failed.")
+    print(f"Markers refused as unconfirmed: {n_markers_refused}")
+    print(f"Documents carrying another document's headings (crop over-reach): {n_overreach}")
+    print(f"Source conservation: {n_truncated} TRUNCATED, {n_unreadable} unreadable, "
+          f"{n_unchecked} unchecked, "
+          f"{n_ok - n_truncated - n_unreadable - n_unchecked} ok")
+    if truncated_syms:
+        print("  truncated: " + ", ".join(truncated_syms[:20])
+              + (" …" if len(truncated_syms) > 20 else ""))
     if to_db:
         print(f"Loaded {n_loaded} docs, {total_elems} element rows into the semantic DB.")
-    return 0 if n_failed == 0 else 1
+    verdict_fail = (n_failed or n_truncated or n_unreadable or n_acct_fail
+                    or n_word_fail or n_overreach)
+    print(("FAIL — " if verdict_fail else "PASS — ")
+          + f"{n_ok} documents, {n_truncated} truncated, {n_overreach} carrying another "
+            f"document's text, {n_unreadable} unreadable sources, "
+            f"{n_acct_fail + n_word_fail} accounting failures, {n_failed} hard failures")
+    # Exit code covers every failure class, accounting included (it used to reflect
+    # hard crashes only, so a run with accounting failures still exited 0).
+    return 0 if not (n_failed or n_truncated or n_unreadable or n_acct_fail or n_word_fail or n_overreach) else 1
 
 
 if __name__ == "__main__":
