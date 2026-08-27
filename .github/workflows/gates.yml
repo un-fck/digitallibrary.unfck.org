@@ -1,0 +1,113 @@
+name: Verification gates
+
+# The gates only mean something if something runs them. Three of the six
+# (verify_toc, verify_display, audit_invariants) were never run by any
+# automation at all — exactly the three that exist because the fidelity gates
+# cannot see structure-flattening or display-invisibility.
+#
+# Two layers here:
+#
+#   self-tests        every gate's built-in NEGATIVE CONTROLS — a damaged input
+#                     the check is proved to reject. Pure Python, no database and
+#                     no archive, so they run on every push and pull request.
+#                     A check that has never been shown to fail is absent, not
+#                     passing; these are what make that claim testable.
+#
+#   negative-controls the full adversarial suite (fulltext_negative_controls.py):
+#                     damages real documents in a throwaway Postgres cluster and
+#                     watches whether each gate's own failure signal moves. Needs
+#                     the production DB (read-only) to seed fixtures and the
+#                     archive to read source files, so it runs on the schedule,
+#                     alongside the nightly pipeline. `--require` makes an
+#                     environment that silently ran nothing a FAILURE: silence
+#                     must never read as success.
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 5 * * *" # 05:00 UTC, after the 03:00 nightly sync
+  workflow_dispatch:
+
+jobs:
+  self-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - run: uv python install 3.13
+      - run: uv sync --frozen
+
+      # Each of these exits non-zero if any built-in negative control stops
+      # being rejected. Never pipe them: `cmd | tail` returns tail's status.
+      - name: verify_pdf self-test
+        run: uv run python python/fulltext_verify_pdf.py --self-test
+      - name: verify_volumes self-test
+        run: uv run python python/fulltext_verify_volumes.py --self-test
+      - name: split_volumes self-test
+        run: uv run python python/fulltext_split_volumes.py --self-test
+
+      # A baseline file is a claim about the corpus. If it is missing, every
+      # finding is untriaged and the gates that read it are red by construction —
+      # so its absence must break the build here rather than surprise a run.
+      - name: baselines are present
+        run: |
+          test -s docs/_baselines/invariants-baseline.tsv
+          test -s docs/_baselines/toc-baseline.tsv
+
+  negative-controls:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      scratch-postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: adv
+          POSTGRES_PASSWORD: adv
+          POSTGRES_DB: advtest
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      ADV_DATABASE_URL: postgresql://adv:adv@127.0.0.1:55432/advtest
+      FULLTEXT_ARCHIVE_ROOT: ${{ secrets.FULLTEXT_ARCHIVE_ROOT }}
+      ADV_SCRATCH: ${{ runner.temp }}/fulltext_adv
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - run: uv python install 3.13
+      - run: uv sync --frozen
+      - name: Install poppler (independent PDF extractor used as ground truth)
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+
+      - name: Seed the throwaway cluster from production (read-only)
+        run: uv run python python/fulltext_negative_controls.py --seed
+
+      # --require is the guard on the guard: if the archive is not mounted, or a
+      # group crashes, the suite has silently checked nothing. Exiting 0 on that
+      # is the failure mode this whole workflow exists to prevent.
+      - name: Negative controls
+        run: |
+          uv run python python/fulltext_negative_controls.py --require 40 \
+            > "$RUNNER_TEMP/negative-controls.log" 2>&1
+          rc=$?
+          cat "$RUNNER_TEMP/negative-controls.log"
+          exit $rc
+
+      - name: Publish the controls table
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: negative-controls
+          path: |
+            ${{ runner.temp }}/fulltext_adv/negative-controls.md
+            ${{ runner.temp }}/negative-controls.log

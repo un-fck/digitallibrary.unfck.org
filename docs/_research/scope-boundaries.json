@@ -1,0 +1,18 @@
+{
+  "universe": 41802,
+  "buckets": {
+    "1 text on site": 22322,
+    "2 stored but invisible to reader": 3098,
+    "3 bracket part, parent has text": 2723,
+    "4 bracket part, parent has no text": 799,
+    "5 image scan, no text layer (OCR, out of scope)": 4889,
+    "6 decision in scanned volume (OCR, out of scope)": 5247,
+    "7 decision, born-digital volume, NOT recovered": 1103,
+    "8 confirmed absent from ODS": 1586,
+    "X never probed (should be zero)": 35
+  },
+  "delivered": 25045,
+  "out_of_scope": 10136,
+  "gap": 6621,
+  "verdict": "FAIL \u2014 35 symbols matched no bucket ('never probed') \u2014 these are unaccounted for, not 'fine'"
+}
